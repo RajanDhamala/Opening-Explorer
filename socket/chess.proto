@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package chess;
+
+option go_package = "./chess;chesspb";
+
+service ChessService {
+  // search for game
+  rpc StartGame (stream StartGameRequest) returns (stream StartGameResponse);
+  // play move in game
+  rpc PlayMove (PlayMoveRequest) returns (PlayMoveResponse);
+}
+
+message Player {
+  string id = 1;
+  string name = 2;
+  int32 rating = 3;
+  string preferred_color = 4;
+}
+
+message StartGameRequest {
+  string timeformat = 1;
+  Player player = 2;
+}
+
+message StartGameResponse {
+  bool isSuccess = 1;
+  string gameId = 2;
+  Player white = 3;
+  Player black = 4;
+}
+
+message PlayMoveRequest {
+  string gameId = 1;
+  string playerId = 2;
+  string playerColor = 3;
+  string fen = 4;
+  string move = 5;
+}
+
+message PlayMoveResponse {
+  string gameId = 1;
+  string newFen = 2;
+  bool isLegal = 3;
+}
+
+
+
+
