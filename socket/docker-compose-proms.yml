@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+  prom-server:
+    image: prom/prometheus
+    container_name: prom-server
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus-config.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - monitor-net
+
+  grafana-server:
+    image: grafana/grafana-oss
+    container_name: grafana-server
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prom-server
+      - loki-server
+    networks:
+      - monitor-net
+
+  loki-server:
+    image: grafana/loki:2.9.0
+    container_name: loki-server
+    ports:
+      - "3100:3100"
+   
+    networks:
+      - monitor-net
+
+networks:
+  monitor-net:
+    driver: bridge

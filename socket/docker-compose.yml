@@ -1,0 +1,60 @@
+version: "3.9"
+
+services:
+  frontend:
+    build:
+      context: ./React
+      target: production
+    ports:
+      - "80:80"
+    depends_on:
+      - backend1
+      - backend2
+    networks:
+      - tinku
+
+  backend1:
+    build:
+      context: ./Express
+      target: production
+    env_file:
+      - ./Express/.env
+    volumes:
+      - common-space:/app/data
+    depends_on:
+      - postgres
+    networks:
+      - tinku
+#  if another backedn instance needed 
+  # backend2:
+  #   build:
+  #     context: ./Express
+  #     target: production
+  #   env_file:
+  #     - ./Express/.env
+  #   volumes:
+  #     - common-space:/app/data
+  #   depends_on:
+  #     - postgres
+  #   networks:
+  #     - tinku
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: myapp  
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - tinku
+
+volumes:
+  common-space:
+  postgres-data:
+
+networks:
+  tinku:
+    driver: bridge
