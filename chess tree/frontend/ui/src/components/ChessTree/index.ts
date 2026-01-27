@@ -6,3 +6,4 @@ export { RecentGames } from './RecentGames';
 export { ColorSelector } from './ColorSelector';
 export { TimeControlFilter } from './TimeControlFilter';
 export { default as MoveHistory } from './MoveHistory';
+export { EvaluationBar } from './EvaluationBar';

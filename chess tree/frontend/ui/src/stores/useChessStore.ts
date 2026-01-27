@@ -19,6 +19,17 @@ export interface MoveNode {
   parent: MoveNode | null;
 }
 
+// Helper to build move history from root to a given node
+const buildMoveHistoryFromNode = (node: MoveNode | null): string[] => {
+  const history: string[] = [];
+  let current = node;
+  while (current) {
+    history.unshift(current.move);
+    current = current.parent;
+  }
+  return history;
+};
+
 interface ChessState {
   game: Chess;
   fen: string;
@@ -30,11 +41,11 @@ interface ChessState {
   boardOrientation: BoardOrientation;
   playerColor: BoardOrientation;
   timeClassFilter: TimeClass;
-  
+
   // Move tree for variations
   moveTree: MoveNode | null;
   currentNode: MoveNode | null;
-  
+
   setGame: (game: Chess) => void;
   setFen: (fen: string) => void;
   addMove: (move: string) => void;
@@ -51,6 +62,7 @@ interface ChessState {
   nextMove: () => void;
   prevMove: () => void;
   selectVariation: (nodeIndex: number) => void;
+  getVariationsAtCurrentPosition: () => MoveNode[];
 }
 
 export const useChessStore = create<ChessState>((set, get) => ({
@@ -69,19 +81,17 @@ export const useChessStore = create<ChessState>((set, get) => ({
 
   setGame: (game) => set({ game }),
   setFen: (fen) => set({ fen }),
-  
+
   addMove: (move) => set((state) => {
     const newGame = new Chess(state.game.fen());
     newGame.move(move);
     const newFen = newGame.fen();
-    
-    // Handle move tree
+
     let newNode: MoveNode;
     let newTree = state.moveTree;
     let newCurrentNode: MoveNode | null;
-    
-    if (!state.currentNode) {
-      // First move - create root
+
+    if (!state.moveTree) {
       newNode = {
         move,
         fen: newFen,
@@ -90,14 +100,27 @@ export const useChessStore = create<ChessState>((set, get) => ({
       };
       newTree = newNode;
       newCurrentNode = newNode;
-    } else {
-      // Check if this move already exists as a child
+    }
+    else if (!state.currentNode) {
+      if (state.moveTree.move === move) {
+        newCurrentNode = state.moveTree;
+      } else {
+        newNode = {
+          move,
+          fen: newFen,
+          children: [],
+          parent: null
+        };
+        newTree = newNode;
+        newCurrentNode = newNode;
+      }
+    }
+    else {
       const existingChild = state.currentNode.children.find(child => child.move === move);
-      
+
       if (existingChild) {
         newCurrentNode = existingChild;
       } else {
-        // Add as new variation
         newNode = {
           move,
           fen: newFen,
@@ -108,36 +131,39 @@ export const useChessStore = create<ChessState>((set, get) => ({
         newCurrentNode = newNode;
       }
     }
-    
+
+    // Build move history from root to current node
+    const newMoveHistory = buildMoveHistoryFromNode(newCurrentNode);
+
     return {
-      moveHistory: [...state.moveHistory, move],
-      currentMoveIndex: state.moveHistory.length,
+      moveHistory: newMoveHistory,
+      currentMoveIndex: newMoveHistory.length - 1,
       moveTree: newTree,
       currentNode: newCurrentNode,
       game: newGame,
       fen: newFen
     };
   }),
-  
+
   setMoveHistory: (history) => set({ moveHistory: history }),
   setCurrentMoveIndex: (index) => set({ currentMoveIndex: index }),
   setMoveFrom: (square) => set({ moveFrom: square }),
   setRightClickedSquares: (squares) => set({ rightClickedSquares: squares }),
   setOptionSquares: (squares) => set({ optionSquares: squares }),
-  
+
   flipBoard: () => set((state) => ({
-    boardOrientation: state.boardOrientation === "white" 
+    boardOrientation: state.boardOrientation === "white"
       ? "black" as BoardOrientation
       : "white" as BoardOrientation
   })),
-  
-  setPlayerColor: (color) => set({ 
+
+  setPlayerColor: (color) => set({
     playerColor: color,
     boardOrientation: color
   }),
-  
+
   setTimeClassFilter: (timeClass) => set({ timeClassFilter: timeClass }),
-  
+
   resetBoard: () => {
     const newGame = new Chess();
     set({
@@ -152,73 +178,125 @@ export const useChessStore = create<ChessState>((set, get) => ({
       currentNode: null
     });
   },
-  
+
   goToMove: (index) => {
-    const { moveHistory, moveTree } = get();
+    const { currentNode, moveTree } = get();
+
+    const fullPath: MoveNode[] = [];
+
+    const pathToCurrent: MoveNode[] = [];
+    let node = currentNode;
+    while (node) {
+      pathToCurrent.unshift(node);
+      node = node.parent;
+    }
+
+    for (const n of pathToCurrent) {
+      fullPath.push(n);
+    }
+
+    let futureNode = currentNode?.children[0] || null;
+    while (futureNode) {
+      fullPath.push(futureNode);
+      futureNode = futureNode.children[0] || null;
+    }
+
+    let targetNode: MoveNode | null = null;
+    if (index >= 0 && index < fullPath.length) {
+      targetNode = fullPath[index];
+    } else if (index < 0) {
+      targetNode = null; // Going to starting position
+    }
+
+    // Rebuild game state from target node's FEN
     const newGame = new Chess();
-    
-    // Replay moves up to the index
-    if (index >= 0) {
-      for (let i = 0; i <= index; i++) {
-        if (i < moveHistory.length) {
-          newGame.move(moveHistory[i]);
-        }
-      }
+    if (targetNode) {
+      newGame.load(targetNode.fen);
     }
-    
-    // Find the corresponding node in the tree
-    let node: MoveNode | null = null;
-    if (index >= 0 && moveTree) {
-      node = moveTree;
-      for (let i = 0; i < index && node; i++) {
-        const nextMove = moveHistory[i + 1];
-        if (nextMove && node.children.length > 0) {
-          const foundChild: MoveNode | undefined = node.children.find(c => c.move === nextMove);
-          node = foundChild || node.children[0];
-        } else {
-          break;
-        }
-      }
-    }
-    
+
+    const newMoveHistory = buildMoveHistoryFromNode(targetNode);
+
     set({
       game: newGame,
       fen: newGame.fen(),
       currentMoveIndex: index,
-      currentNode: node,
+      currentNode: targetNode,
+      moveHistory: newMoveHistory,
       moveFrom: null,
       optionSquares: {},
     });
   },
-  
+
   nextMove: () => {
-    const { currentMoveIndex, moveHistory } = get();
-    if (currentMoveIndex < moveHistory.length - 1) {
-      get().goToMove(currentMoveIndex + 1);
+    const { currentNode, moveTree } = get();
+
+    if (!currentNode && moveTree) {
+      const newGame = new Chess(moveTree.fen);
+      const newMoveHistory = buildMoveHistoryFromNode(moveTree);
+
+      set({
+        currentNode: moveTree,
+        game: newGame,
+        fen: moveTree.fen,
+        moveHistory: newMoveHistory,
+        currentMoveIndex: 0,
+        moveFrom: null,
+        optionSquares: {},
+      });
+      return;
+    }
+
+    // Case 2: At a node with children, move to first child
+    if (currentNode && currentNode.children.length > 0) {
+      const nextNode = currentNode.children[0];
+      const newGame = new Chess(nextNode.fen);
+      const newMoveHistory = buildMoveHistoryFromNode(nextNode);
+
+      set({
+        currentNode: nextNode,
+        game: newGame,
+        fen: nextNode.fen,
+        moveHistory: newMoveHistory,
+        currentMoveIndex: newMoveHistory.length - 1,
+        moveFrom: null,
+        optionSquares: {},
+      });
     }
   },
-  
+
   prevMove: () => {
-    const { currentMoveIndex } = get();
-    if (currentMoveIndex >= 0) {
-      get().goToMove(currentMoveIndex - 1);
+    const { currentNode } = get();
+
+    if (currentNode) {
+      const parentNode = currentNode.parent;
+      const newGame = new Chess();
+
+      if (parentNode) {
+        newGame.load(parentNode.fen);
+      }
+
+      const newMoveHistory = buildMoveHistoryFromNode(parentNode);
+
+      set({
+        currentNode: parentNode,
+        game: newGame,
+        fen: newGame.fen(),
+        moveHistory: newMoveHistory,
+        currentMoveIndex: newMoveHistory.length - 1,
+        moveFrom: null,
+        optionSquares: {},
+      });
     }
   },
-  
+
   selectVariation: (nodeIndex: number) => {
     const { currentNode } = get();
     if (currentNode && currentNode.children[nodeIndex]) {
       const selectedNode = currentNode.children[nodeIndex];
       const newGame = new Chess(selectedNode.fen);
-      
-      // Build move history from root to this node
-      const history: string[] = [];
-      let node: MoveNode | null = selectedNode;
-      while (node) {
-        history.unshift(node.move);
-        node = node.parent;
-      }
-      
+
+      const history = buildMoveHistoryFromNode(selectedNode);
+
       set({
         currentNode: selectedNode,
         game: newGame,
@@ -227,5 +305,13 @@ export const useChessStore = create<ChessState>((set, get) => ({
         currentMoveIndex: history.length - 1
       });
     }
+  },
+
+  getVariationsAtCurrentPosition: () => {
+    const { currentNode } = get();
+    if (currentNode && currentNode.children.length > 1) {
+      return currentNode.children;
+    }
+    return [];
   }
 }));

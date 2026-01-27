@@ -5,15 +5,16 @@ const router = express.Router();
 
 router.post('/process', async (req, res) => {
   try {
-    const { filepath, username } = req.body;
-    
+    const { filepath, username: demoname } = req.body;
+    const username = "Thakursahab769"
+
     if (!filepath || !username) {
       return res.status(400).json({ error: 'filepath and username are required' });
     }
-    
+
     console.log(`Starting to process games for user: ${username}`);
     const result = await processGamesFromFile(filepath, username);
-    
+
     res.json({
       success: true,
       ...result

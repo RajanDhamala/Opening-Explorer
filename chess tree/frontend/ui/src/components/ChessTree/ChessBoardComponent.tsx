@@ -7,12 +7,14 @@ interface ChessBoardComponentProps {
   onDrop: (sourceSquare: Square, targetSquare: Square) => boolean;
   onSquareClick: (square: Square) => void;
   onSquareRightClick: (square: Square) => void;
+  arrows?: Array<[Square, Square, string?]>;
 }
 
 export const ChessBoardComponent = memo(({
   onDrop,
   onSquareClick,
   onSquareRightClick,
+  arrows = [],
 }: ChessBoardComponentProps) => {
   const fen = useChessStore((state) => state.fen);
   const optionSquares = useChessStore((state) => state.optionSquares);
@@ -35,6 +37,7 @@ export const ChessBoardComponent = memo(({
           borderRadius: '8px',
           boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
         }}
+        customArrows={arrows}
       />
     </div>
   );

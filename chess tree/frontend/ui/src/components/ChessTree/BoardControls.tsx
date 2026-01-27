@@ -7,8 +7,14 @@ export const BoardControls = memo(() => {
   const prevMove = useChessStore((state) => state.prevMove);
   const nextMove = useChessStore((state) => state.nextMove);
   const flipBoard = useChessStore((state) => state.flipBoard);
+  const currentNode = useChessStore((state) => state.currentNode);
+  const moveTree = useChessStore((state) => state.moveTree);
   const moveHistory = useChessStore((state) => state.moveHistory);
-  const currentMoveIndex = useChessStore((state) => state.currentMoveIndex);
+
+  const canGoPrev = currentNode !== null;
+
+  const canGoNext = (!currentNode && moveTree !== null) ||
+    (currentNode !== null && currentNode.children.length > 0);
 
   return (
     <div className="mt-4 flex gap-2 justify-center flex-wrap">
@@ -23,7 +29,7 @@ export const BoardControls = memo(() => {
 
       <button
         onClick={prevMove}
-        disabled={currentMoveIndex < 0}
+        disabled={!canGoPrev}
         className="px-4 py-2 bg-slate-600 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg transition flex items-center gap-2"
         title="Previous move"
       >
@@ -33,7 +39,7 @@ export const BoardControls = memo(() => {
 
       <button
         onClick={nextMove}
-        disabled={currentMoveIndex >= moveHistory.length - 1}
+        disabled={!canGoNext}
         className="px-4 py-2 bg-slate-600 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg transition flex items-center gap-2"
         title="Next move"
       >
@@ -42,7 +48,7 @@ export const BoardControls = memo(() => {
       </button>
 
       <div className="px-3 py-2 bg-slate-700 rounded-lg text-sm flex items-center">
-        Move: {currentMoveIndex + 1}/{moveHistory.length || 0}
+        Move: {moveHistory.length > 0 ? moveHistory.length : 0}
       </div>
 
       <button

@@ -1,9 +1,10 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Chess } from 'chess.js';
 import type { Square } from 'react-chessboard/dist/chessboard/types';
 import { useChessStore } from '../stores/useChessStore';
 import { usePositionData } from '../hooks/usePositionData';
 import { useKeyboardNavigation } from '../hooks/useKeyboardNavigation';
+import { useStockfish } from '../hooks/useStockfish';
 import { ChessBoardComponent } from '../components/ChessTree/ChessBoardComponent';
 import { BoardControls } from '../components/ChessTree/BoardControls';
 import MoveHistory from '@/components/ChessTree/MoveHistory';
@@ -12,6 +13,7 @@ import { NextMoves } from '../components/ChessTree/NextMoves';
 import { RecentGames } from '../components/ChessTree/RecentGames';
 import { ColorSelector } from '../components/ChessTree/ColorSelector';
 import { TimeControlFilter } from '../components/ChessTree/TimeControlFilter';
+import { EvaluationBar } from '../components/ChessTree/EvaluationBar';
 
 export default function ChessTree() {
   const game = useChessStore((state) => state.game);
@@ -31,6 +33,18 @@ export default function ChessTree() {
     playerColor,
     timeClassFilter !== 'all' ? timeClassFilter : undefined
   );
+
+  // Stockfish analysis
+  const isGameOver = game.isGameOver() || game.isDraw();
+  const { evaluation, isAnalyzing } = useStockfish(fen, game.turn(), isGameOver);
+
+  // Best move arrow
+  const bestMoveArrows = useMemo(() => {
+    if (!evaluation.bestMove || evaluation.bestMove.length < 4) return [];
+    const from = evaluation.bestMove.substring(0, 2) as Square;
+    const to = evaluation.bestMove.substring(2, 4) as Square;
+    return [[from, to, 'rgb(0, 180, 0)']] as Array<[Square, Square, string]>;
+  }, [evaluation.bestMove]);
 
   useKeyboardNavigation();
 
@@ -60,6 +74,7 @@ export default function ChessTree() {
         return true;
       }
     } catch (err) {
+      console.log("invalid move aayo haai")
       console.log('Invalid move');
     }
 
@@ -157,11 +172,26 @@ export default function ChessTree() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
             <div className="bg-slate-800 rounded-xl shadow-2xl p-6">
-              <ChessBoardComponent
-                onDrop={onDrop}
-                onSquareClick={onSquareClick}
-                onSquareRightClick={onSquareRightClick}
-              />
+              <div className="flex gap-4">
+                {/* Evaluation Bar */}
+                <EvaluationBar
+                  evaluation={evaluation.positionEvaluation}
+                  possibleMate={evaluation.possibleMate}
+                  depth={evaluation.depth}
+                  bestLine={evaluation.bestLine}
+                  isAnalyzing={isAnalyzing}
+                />
+
+                {/* Chessboard */}
+                <div className="flex-1">
+                  <ChessBoardComponent
+                    onDrop={onDrop}
+                    onSquareClick={onSquareClick}
+                    onSquareRightClick={onSquareRightClick}
+                    arrows={bestMoveArrows}
+                  />
+                </div>
+              </div>
 
               <BoardControls />
               <div>move history</div>
