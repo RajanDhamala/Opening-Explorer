@@ -1,11 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import type { Square } from 'react-chessboard/dist/chessboard/types';
-import Engine from '../engine';
+import Engine, { ENGINE_VARIANTS, getDefaultVariant, hasSharedArrayBuffer } from '../engine';
+import type { EngineOptions, EngineVariant } from '../engine';
 
 export default function StockfishTest() {
-  const engine = useMemo(() => new Engine(), []);
+  const [selectedVariant, setSelectedVariant] = useState<EngineVariant>(getDefaultVariant());
+  const engineRef = useRef<Engine | null>(null);
+  const initRef = useRef(false);
+  const settingsRef = useRef<HTMLDivElement | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const maxThreads = useMemo(
+    () => Math.max(1, typeof navigator === 'undefined' ? 1 : navigator.hardwareConcurrency || 1),
+    []
+  );
+  const initialOptions = useMemo(
+    () => ({ threads: maxThreads, hash: 128, multiPV: 3 }),
+    [maxThreads]
+  );
+  const [threadCount, setThreadCount] = useState(initialOptions.threads);
+  const [hashSize, setHashSize] = useState(initialOptions.hash);
+  const [multiPV, setMultiPV] = useState(initialOptions.multiPV);
+
   const chessGameRef = useRef(new Chess());
   const chessGame = chessGameRef.current;
 
@@ -15,7 +33,10 @@ export default function StockfishTest() {
   const [bestLine, setBestLine] = useState('');
   const [possibleMate, setPossibleMate] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [engineLoading, setEngineLoading] = useState(false);
   const [topLines, setTopLines] = useState<Array<{ multipv: number; pv: string; scoreCp?: number; mate?: number }>>([]);
+
+  const hasSAB = hasSharedArrayBuffer();
 
   const randomFens = [
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -24,6 +45,61 @@ export default function StockfishTest() {
     "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 6"
   ];
 
+  // Load engine for selected variant
+  const loadEngine = useCallback((variant: EngineVariant, options: EngineOptions) => {
+    if (engineRef.current) {
+      engineRef.current.stop();
+      engineRef.current.terminate();
+    }
+    setEngineLoading(true);
+    setDepth(0);
+    setBestLine('');
+    setPossibleMate('');
+    setPositionEvaluation(0);
+    setTopLines([]);
+    setIsAnalyzing(false);
+
+    setSelectedVariant(variant);
+    const eng = new Engine(variant, options);
+    engineRef.current = eng;
+    eng.onReady(() => {
+      setEngineLoading(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!selectedVariant.multiThreaded) {
+      setThreadCount(1);
+      return;
+    }
+    setThreadCount((prev) => Math.min(Math.max(1, prev), maxThreads));
+  }, [maxThreads, selectedVariant.multiThreaded]);
+
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || engineLoading) return;
+    engine.updateOptions({ threads: threadCount, hash: hashSize, multiPV });
+    setTopLines([]);
+  }, [engineLoading, hashSize, multiPV, threadCount]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const handleOutside = (event: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
+        setSettingsOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSettingsOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [settingsOpen]);
+
   useEffect(() => {
     const fen = randomFens[Math.floor(Math.random() * randomFens.length)];
     chessGame.load(fen);
@@ -31,21 +107,28 @@ export default function StockfishTest() {
   }, []);
 
   useEffect(() => {
+    if (initRef.current) return;
+    initRef.current = true;
+    loadEngine(getDefaultVariant(), initialOptions);
+  }, [initialOptions, loadEngine]);
+
+  // Run analysis whenever position changes and engine is loaded
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || engineLoading) return;
     if (chessGame.isGameOver() || chessGame.isDraw()) return;
 
     setIsAnalyzing(true);
-    engine.evaluatePosition(chessGame.fen(), 3000, 30); // 3s search, depth 30
+    engine.evaluatePosition(chessGame.fen(), 5000, 30);
 
-    engine.onMessage(({ lines, bestMove: engineBest, uciMessage }) => {
+    engine.onMessage(({ lines }) => {
       if (!lines || lines.length === 0) return;
 
-      // Take top PV line as "best line"
       const topLine = lines[0];
       setBestLine(topLine.pv);
 
-      // Evaluation in pawns
       if (topLine.mate !== undefined) {
-        setPositionEvaluation(topLine.mate > 0 ? 100 : -100); // special flag for mate
+        setPositionEvaluation(topLine.mate > 0 ? 100 : -100);
         setPossibleMate(String(topLine.mate));
       } else if (topLine.scoreCp !== undefined) {
         const evalScore = (chessGame.turn() === 'w' ? 1 : -1) * topLine.scoreCp / 100;
@@ -53,29 +136,20 @@ export default function StockfishTest() {
         setPossibleMate('');
       }
 
-      // Depth of analysis
       if (topLine.depth) setDepth(topLine.depth);
 
-      // Store all top lines for display
-      setTopLines(lines.map(l => ({
-        multipv: l.multipv,
-        pv: l.pv,
-        scoreCp: l.scoreCp,
-        mate: l.mate
-      })));
+      setTopLines(
+        lines.slice(0, multiPV).map(l => ({
+          multipv: l.multipv,
+          pv: l.pv,
+          scoreCp: l.scoreCp,
+          mate: l.mate
+        }))
+      );
 
       setIsAnalyzing(false);
-
-      // Optional: log all lines
-      console.log('Top lines:');
-      lines.forEach(line => {
-        console.log(
-          `#${line.multipv} [depth ${line.depth}] ${line.pv} eval: ${line.mate !== undefined ? '#' + line.mate : line.scoreCp
-          }`
-        );
-      });
     });
-  }, [chessPosition, engine, chessGame]);
+  }, [chessPosition, engineLoading, multiPV]);
 
   function onPieceDrop(sourceSquare: Square, targetSquare: Square) {
     try {
@@ -85,7 +159,7 @@ export default function StockfishTest() {
         promotion: 'q',
       });
       if (move) {
-        engine.stop();
+        engineRef.current?.stop();
         setBestLine('');
         setPossibleMate('');
         setDepth(0);
@@ -98,7 +172,6 @@ export default function StockfishTest() {
     return false;
   }
 
-  // Convert UCI move (e.g., "e2e4") to SAN (e.g., "e4") using a temp Chess instance
   const uciToSan = (fen: string, uciMove: string): string => {
     try {
       const tempGame = new Chess(fen);
@@ -112,7 +185,6 @@ export default function StockfishTest() {
     }
   };
 
-  // Convert a line of UCI moves to SAN notation
   const uciLineToSan = (fen: string, uciLine: string): string => {
     const moves = uciLine.split(' ');
     const tempGame = new Chess(fen);
@@ -132,7 +204,6 @@ export default function StockfishTest() {
     return sanMoves.join(' ');
   };
 
-  // Play first move of a line
   const playLineMove = (uciLine: string) => {
     const firstMove = uciLine.split(' ')[0];
     if (!firstMove || firstMove.length < 4) return;
@@ -142,7 +213,7 @@ export default function StockfishTest() {
     try {
       const move = chessGame.move({ from, to, promotion });
       if (move) {
-        engine.stop();
+        engineRef.current?.stop();
         setBestLine('');
         setPossibleMate('');
         setDepth(0);
@@ -154,8 +225,9 @@ export default function StockfishTest() {
 
   const bestMove = bestLine?.split(' ')[0];
   const bestMoveSan = bestMove ? uciToSan(chessPosition, bestMove) : '-';
+  const statusLabel = engineLoading ? 'Loading' : isAnalyzing ? 'Analyzing' : 'Ready';
+  const displayedLines = topLines.slice(0, multiPV);
 
-  // Evaluation bar calculation
   const clampedEval = Math.max(-10, Math.min(10, positionEvaluation));
   const whitePercentage = possibleMate
     ? (Number(possibleMate) > 0 ? 100 : 0)
@@ -167,124 +239,256 @@ export default function StockfishTest() {
       ? `+${positionEvaluation.toFixed(2)}`
       : positionEvaluation.toFixed(2);
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6 text-white">
-      <div className="max-w-5xl mx-auto">
-        <h1 className="text-3xl font-bold text-center mb-2">Stockfish Analysis Board</h1>
-        <p className="text-slate-400 text-center mb-6">Make moves and see Stockfish's evaluation</p>
+  const strengthStars = (n: number) => '★'.repeat(n) + '☆'.repeat(5 - n);
 
-        <div className="flex gap-6 justify-center">
-          {/* Evaluation Bar */}
-          <div className="flex flex-col items-center">
-            <div className="text-xs text-slate-400 mb-1">Black</div>
-            <div className="relative w-8 h-[400px] bg-zinc-900 rounded overflow-hidden border border-zinc-700">
-              {/* White section (bottom) */}
+  return (
+    <div className="dark min-h-screen bg-background text-foreground">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 lg:px-8">
+        <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Stockfish Analysis</h1>
+            <p className="text-sm text-muted-foreground">Play moves and review engine evaluation.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Stockfish 17.1</span>
+            <span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
+            <span>{hashSize}MB · {multiPV} lines</span>
+          </div>
+        </header>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <span className="text-base">{selectedVariant.icon}</span>
+              <span>{selectedVariant.name}</span>
+            </div>
+            <span className="text-xs text-muted-foreground">{selectedVariant.size}</span>
+            <span className="text-xs text-muted-foreground">{strengthStars(selectedVariant.strength)}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-medium">
+              {statusLabel}
+            </span>
+            <div ref={settingsRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setSettingsOpen((prev) => !prev)}
+                className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted"
+                aria-expanded={settingsOpen}
+              >
+                Settings
+              </button>
+              {settingsOpen && (
+                <div className="absolute right-0 z-20 mt-2 w-80 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-lg">
+                  <div className="space-y-4">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Engine</div>
+                      {!hasSAB && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          SharedArrayBuffer unavailable. Multi-threaded engines are disabled.
+                        </p>
+                      )}
+                      <div className="mt-3 space-y-2">
+                        {ENGINE_VARIANTS.map((v) => {
+                          const disabled = v.requiresCORS && !hasSAB;
+                          const isSelected = selectedVariant.id === v.id;
+                          return (
+                            <button
+                              key={v.id}
+                              type="button"
+                              disabled={disabled || engineLoading}
+                              onClick={() => {
+                                if (disabled || engineLoading) return;
+                                loadEngine(v, { threads: threadCount, hash: hashSize, multiPV });
+                                setSettingsOpen(false);
+                              }}
+                              className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
+                                disabled
+                                  ? 'cursor-not-allowed border-border/50 bg-muted/40 text-muted-foreground'
+                                  : isSelected
+                                    ? 'border-foreground/40 bg-muted'
+                                    : 'border-border bg-background hover:bg-muted'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-base">{v.icon}</span>
+                                <div className="flex-1">
+                                  <div className="font-medium">{v.name}</div>
+                                  <div className="text-xs text-muted-foreground">{v.description}</div>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="h-px bg-border" />
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <div>
+                          <div className="font-medium">Threads</div>
+                          <div className="text-xs text-muted-foreground">
+                            {selectedVariant.multiThreaded ? `Up to ${maxThreads}` : 'Single-threaded engine'}
+                          </div>
+                        </div>
+                        <span className="text-xs font-mono">{threadCount}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={1}
+                        max={maxThreads}
+                        step={1}
+                        value={threadCount}
+                        disabled={!selectedVariant.multiThreaded}
+                        onChange={(event) => setThreadCount(Number(event.target.value))}
+                        className="h-2 w-full cursor-pointer rounded-full bg-muted accent-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <div>
+                          <div className="font-medium">Memory</div>
+                          <div className="text-xs text-muted-foreground">Hash size in MB</div>
+                        </div>
+                        <span className="text-xs font-mono">{hashSize} MB</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={16}
+                        max={512}
+                        step={16}
+                        value={hashSize}
+                        onChange={(event) => setHashSize(Number(event.target.value))}
+                        className="h-2 w-full cursor-pointer rounded-full bg-muted accent-foreground"
+                      />
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <div>
+                          <div className="font-medium">Lines</div>
+                          <div className="text-xs text-muted-foreground">MultiPV variations</div>
+                        </div>
+                        <span className="text-xs font-mono">{multiPV}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={1}
+                        max={5}
+                        step={1}
+                        value={multiPV}
+                        onChange={(event) => setMultiPV(Number(event.target.value))}
+                        className="h-2 w-full cursor-pointer rounded-full bg-muted accent-foreground"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col items-center gap-6 lg:flex-row lg:items-start lg:justify-center">
+          <div className="flex flex-row items-center gap-3 lg:flex-col">
+            <div className="text-xs text-muted-foreground">Black</div>
+            <div className="relative h-[min(85vw,720px)] w-8 overflow-hidden rounded-md border border-border bg-muted">
               <div
-                className="absolute bottom-0 left-0 right-0 bg-white transition-all duration-500 ease-out"
+                className="absolute bottom-0 left-0 right-0 bg-foreground transition-all duration-500 ease-out"
                 style={{ height: `${whitePercentage}%` }}
               />
-              {/* Black section (top) */}
               <div
-                className="absolute top-0 left-0 right-0 bg-zinc-700 transition-all duration-500 ease-out"
+                className="absolute top-0 left-0 right-0 bg-muted-foreground/40 transition-all duration-500 ease-out"
                 style={{ height: `${100 - whitePercentage}%` }}
               />
-              {/* Center line */}
-              <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-yellow-500/50" />
-              {/* Eval number on bar */}
               <div className="absolute inset-0 flex items-center justify-center">
-                <span className={`text-xs font-bold px-1 rounded ${positionEvaluation >= 0 ? 'bg-black/70 text-white' : 'bg-white/90 text-black'}`}>
+                <span className="rounded bg-background/80 px-1 text-[10px] font-semibold text-foreground">
                   {displayEval}
                 </span>
               </div>
             </div>
-            <div className="text-xs text-slate-400 mt-1">White</div>
+            <div className="text-xs text-muted-foreground">White</div>
           </div>
 
-          {/* Chessboard */}
-          <div className="w-[600px]">
-            <Chessboard
-              id="stockfish-board"
-              position={chessPosition}
-              onPieceDrop={onPieceDrop}
-              customBoardStyle={{
-                borderRadius: '8px',
-                boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
-              }}
-            />
+          <div className="w-full max-w-[720px]">
+            <div className="aspect-square w-full">
+              <Chessboard
+                id="stockfish-board"
+                position={chessPosition}
+                onPieceDrop={onPieceDrop}
+                customBoardStyle={{
+                  borderRadius: '10px',
+                  boxShadow: '0 12px 30px rgba(0,0,0,0.35)'
+                }}
+              />
+            </div>
           </div>
 
-          {/* Info Panel */}
-          <div className="w-64 bg-slate-800 rounded-lg p-4 space-y-4">
+          <div className="w-full max-w-[320px] space-y-4 rounded-lg border border-border bg-card p-4">
             <div>
-              <div className="text-slate-400 text-sm">Status</div>
-              <div className={`font-medium ${isAnalyzing ? 'text-yellow-400' : 'text-green-400'}`}>
-                {isAnalyzing ? '🔄 Analyzing...' : '✓ Ready'}
-              </div>
+              <div className="text-xs text-muted-foreground">Status</div>
+              <div className="text-sm font-medium">{statusLabel}</div>
             </div>
 
             <div>
-              <div className="text-slate-400 text-sm">Depth</div>
-              <div className="font-medium text-xl">{depth}</div>
+              <div className="text-xs text-muted-foreground">Depth</div>
+              <div className="text-2xl font-semibold">{depth}</div>
             </div>
 
             <div>
-              <div className="text-slate-400 text-sm">Evaluation</div>
-              <div className={`font-bold text-2xl ${positionEvaluation >= 0 ? 'text-white' : 'text-red-400'}`}>
+              <div className="text-xs text-muted-foreground">Evaluation</div>
+              <div className={`text-2xl font-semibold ${positionEvaluation < 0 ? 'text-red-400' : 'text-foreground'}`}>
                 {displayEval}
               </div>
             </div>
 
             <div>
-              <div className="text-slate-400 text-sm">Best Move</div>
-              <div className="font-mono text-green-400 text-lg">{bestMoveSan}</div>
+              <div className="text-xs text-muted-foreground">Best Move</div>
+              <div className="font-mono text-lg text-foreground">{bestMoveSan}</div>
             </div>
 
             <div>
-              <div className="text-slate-400 text-sm mb-2">Top 3 Lines</div>
-              <div className="space-y-1">
-                {topLines.length > 0 ? topLines.map((line, idx) => {
-                  const evalDisplay = line.mate !== undefined 
-                    ? `#${line.mate}` 
-                    : line.scoreCp !== undefined 
+              <div className="mb-2 text-xs text-muted-foreground">Top {multiPV} Lines</div>
+              <div className="space-y-1.5">
+                {displayedLines.length > 0 ? displayedLines.map((line, idx) => {
+                  const evalDisplay = line.mate !== undefined
+                    ? `#${line.mate}`
+                    : line.scoreCp !== undefined
                       ? `${(line.scoreCp / 100 * (chessGame.turn() === 'w' ? 1 : -1)) >= 0 ? '+' : ''}${(line.scoreCp / 100 * (chessGame.turn() === 'w' ? 1 : -1)).toFixed(1)}`
                       : '?';
                   const sanLine = uciLineToSan(chessPosition, line.pv);
-                  const bgColors = ['bg-green-900/50 hover:bg-green-800/60', 'bg-yellow-900/40 hover:bg-yellow-800/50', 'bg-orange-900/30 hover:bg-orange-800/40'];
                   return (
-                    <div 
-                      key={idx} 
+                    <div
+                      key={`${line.multipv}-${idx}`}
                       onClick={() => playLineMove(line.pv)}
-                      className={`cursor-pointer rounded px-2 py-1.5 transition ${bgColors[idx] || 'bg-slate-700 hover:bg-slate-600'}`}
+                      className="cursor-pointer rounded-md border border-border/50 bg-muted/50 px-2 py-2 transition hover:bg-muted"
                     >
                       <div className="flex items-center gap-2">
-                        <span className="text-slate-400 text-xs font-bold w-4">{line.multipv}</span>
-                        <span className="text-white font-semibold text-sm min-w-[45px]">{evalDisplay}</span>
-                        <span className="font-mono text-xs text-slate-200 truncate">
+                        <span className="text-xs font-semibold text-muted-foreground w-4">{line.multipv}</span>
+                        <span className="text-sm font-semibold text-foreground min-w-[45px]">{evalDisplay}</span>
+                        <span className="truncate font-mono text-xs text-muted-foreground">
                           {sanLine.split(' ').slice(0, 6).join(' ')}
                         </span>
                       </div>
                     </div>
                   );
-                }) : <span className="text-slate-500 text-sm">-</span>}
+                }) : <span className="text-xs text-muted-foreground">No lines yet.</span>}
               </div>
             </div>
 
-            <div className="pt-2 border-t border-slate-700">
-              <div className="text-slate-400 text-sm">Turn</div>
-              <div className="font-medium">{chessGame.turn() === 'w' ? '⚪ White' : '⚫ Black'}</div>
+            <div className="border-t border-border pt-2">
+              <div className="text-xs text-muted-foreground">Turn</div>
+              <div className="text-sm font-medium">{chessGame.turn() === 'w' ? 'White' : 'Black'}</div>
             </div>
           </div>
         </div>
 
-        {/* Controls */}
-        <div className="flex gap-4 justify-center mt-6">
+        <div className="flex flex-wrap justify-center gap-3">
           <button
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-700 rounded font-medium transition"
+            className="rounded-md border border-border bg-muted px-4 py-2 text-sm font-medium transition hover:bg-muted/70"
             onClick={() => {
               const fen = randomFens[Math.floor(Math.random() * randomFens.length)];
               chessGame.load(fen);
               setChessPosition(chessGame.fen());
-              engine.stop();
+              engineRef.current?.stop();
               setBestLine('');
               setPositionEvaluation(0);
               setPossibleMate('');
@@ -292,14 +496,14 @@ export default function StockfishTest() {
               setTopLines([]);
             }}
           >
-            🎲 Random Position
+            Random Position
           </button>
           <button
-            className="px-5 py-2 bg-slate-600 hover:bg-slate-700 rounded font-medium transition"
+            className="rounded-md border border-border bg-muted px-4 py-2 text-sm font-medium transition hover:bg-muted/70"
             onClick={() => {
               chessGame.reset();
               setChessPosition(chessGame.fen());
-              engine.stop();
+              engineRef.current?.stop();
               setBestLine('');
               setPositionEvaluation(0);
               setPossibleMate('');
@@ -307,20 +511,19 @@ export default function StockfishTest() {
               setTopLines([]);
             }}
           >
-            🔄 Reset Board
+            Reset Board
           </button>
           <button
-            className="px-5 py-2 bg-red-600 hover:bg-red-700 rounded font-medium transition"
-            onClick={() => engine.stop()}
+            className="rounded-md border border-border bg-muted px-4 py-2 text-sm font-medium transition hover:bg-muted/70"
+            onClick={() => engineRef.current?.stop()}
           >
-            ⏹ Stop Analysis
+            Stop Analysis
           </button>
         </div>
 
-        {/* FEN display */}
-        <div className="mt-6 bg-slate-800/50 rounded p-3 text-center">
-          <span className="text-slate-400 text-sm">FEN: </span>
-          <span className="font-mono text-xs text-slate-300">{chessPosition}</span>
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
+          <span>FEN: </span>
+          <span className="font-mono text-[11px] text-foreground">{chessPosition}</span>
         </div>
       </div>
     </div>
