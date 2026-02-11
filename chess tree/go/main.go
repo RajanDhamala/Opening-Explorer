@@ -202,7 +202,7 @@ func EvaluateFen(fen string) (interface{}, PvLine) {
 
 	fmt.Fprintln(stdin, "position fen "+trimmedInput)
 
-	fmt.Fprintln(stdin, "go movetime 500")
+	fmt.Fprintln(stdin, "go movetime 2000")
 	// fmt.Fprintln(stdin, "go depth 20"
 
 	scanner := bufio.NewScanner(stdout)
