@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	// "github.com/notnil/chess"
+	"chess/Utils"
 )
 
 var (
@@ -60,6 +61,11 @@ type Player struct {
 type Timeline struct {
 	Year  string `json:"year"`
 	Month string `json:"month"`
+}
+
+type Move struct {
+	San   string
+	Clock string
 }
 
 func main() {
@@ -122,58 +128,5 @@ func main() {
 		}
 	}
 	pgn := selectedGame.PGN
-	lines := strings.Split(pgn, "\n")
-
-	// noraml unoptmized switch case to parse pgn
-	for _, item := range lines {
-		switch {
-		case strings.HasPrefix(item, "[Site"):
-			fmt.Println("Site:", item)
-
-		case strings.HasPrefix(item, "[Date"):
-			fmt.Println("Date:", item)
-
-		case strings.HasPrefix(item, "[White"):
-			fmt.Println("White:", item)
-
-		case strings.HasPrefix(item, "[Black"):
-			fmt.Println("Black:", item)
-
-		case strings.HasPrefix(item, "[Result"):
-			fmt.Println("Result:", item)
-
-		case strings.HasPrefix(item, "[CurrentPosition"):
-			fmt.Println("Current Position:", item)
-
-		case strings.HasPrefix(item, "[ECOUrl"):
-			fmt.Println("ECO URL:", item)
-
-		case strings.HasPrefix(item, "[UTCTime"):
-			fmt.Println("UTC Time:", item)
-
-		case strings.HasPrefix(item, "[WhiteElo"):
-			fmt.Println("White Elo:", item)
-
-		case strings.HasPrefix(item, "[BlackElo"):
-			fmt.Println("Black Elo:", item)
-
-		case strings.HasPrefix(item, "[TimeControl"):
-			fmt.Println("Time Control:", item)
-
-		case strings.HasPrefix(item, "[Termination"):
-			fmt.Println("Termination:", item)
-
-		case strings.HasPrefix(item, "[StartTime"):
-			fmt.Println("Start Time:", item)
-
-		case strings.HasPrefix(item, "[EndTime"):
-			fmt.Println("End Time:", item)
-
-		case strings.HasPrefix(item, "[Link"):
-			fmt.Println("Link:", item)
-
-		case strings.HasPrefix(item, "1."):
-			fmt.Println("Moves start here:", item)
-		}
-	}
+	utils.SplitPgn(pgn)
 }
