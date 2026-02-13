@@ -124,6 +124,8 @@ func main() {
 	for i := range intermidiate.Data.Games {
 		if intermidiate.Data.Games[i].White.Username == "I_use_NVIM_Btw" {
 			selectedGame = &intermidiate.Data.Games[i]
+
+			fmt.Println("selectedGame:", selectedGame.Black)
 			break
 		}
 	}
