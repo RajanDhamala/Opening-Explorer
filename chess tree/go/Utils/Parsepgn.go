@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"encoding/json"
+	// "encoding/json"
 	"fmt"
 	"strings"
 )
@@ -34,11 +34,11 @@ type Move struct {
 	Clock string
 }
 
-func SplitPgn(pgn string) {
+func SplitPgn(pgn string) (*Pgn, []Move) {
 	splitted := strings.SplitN(pgn, "\n\n", 2)
-	ParsePngHeader(splitted[0])
-	ParsePgnBody(splitted[1])
-	// fmt.Printf("PGN Header Struct:\n%+v\n", addr)
+	header := ParsePngHeader(splitted[0])
+	moves := ParsePgnBody(splitted[1])
+	return header, moves
 }
 
 func ParsePngHeader(header string) *Pgn {
@@ -102,7 +102,7 @@ func ParsePngHeader(header string) *Pgn {
 func ParsePgnBody(body string) []Move {
 	bodyArray := strings.Fields(body)
 	var moves []Move
-	Result := ""
+	// Result := ""
 
 	for i, item := range bodyArray {
 		if strings.HasSuffix(item, ".") {
@@ -124,8 +124,8 @@ func ParsePgnBody(body string) []Move {
 			continue
 		}
 		if strings.HasPrefix(item, "1-0") || strings.HasPrefix(item, "0-1") {
-			fmt.Println("game is over")
-			Result = item
+			// fmt.Println("game is over")
+			// Result = item
 			continue
 		}
 
@@ -133,8 +133,9 @@ func ParsePgnBody(body string) []Move {
 			San: item,
 		})
 	}
-	b, _ := json.MarshalIndent(moves, "", " ")
-	fmt.Println(string(b))
-	fmt.Println("result:", Result)
+	// b, _ := json.MarshalIndent(moves, "", " ")
+	// fmt.Println(string(b))
+	// fmt.Println("result:", Result)
+	fmt.Println("moves array:", moves)
 	return moves
 }
