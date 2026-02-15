@@ -21,17 +21,26 @@ func main() {
 	app.Get("/png", func(c *fiber.Ctx) error {
 		fmt.Println("png route hitted")
 
-		png, moves, err := utils.FetchProcess()
+		png, moves, selectedGame, err := utils.FetchProcess()
 		if err != nil {
 			return c.Status(400).JSON(fiber.Map{
 				"error": err.Error(),
 			})
 		}
 
-		Processpipline.ProcessPipeline(png, moves)
+		Processpipline.ProcessPipeline(png, moves, selectedGame)
 
 		return c.Status(200).JSON(fiber.Map{
 			"message": "we processed the pgn",
+		})
+	})
+
+	app.Get("/arry", func(c *fiber.Ctx) error {
+		games := Processpipline.HashMap
+		fmt.Println("games:", games)
+		return c.Status(200).JSON(fiber.Map{
+			"message": "fetched the game data",
+			"data":    games,
 		})
 	})
 

@@ -4,6 +4,7 @@ import (
 	// "encoding/json"
 	"fmt"
 	"strings"
+	// demo "github.com/notnil/chess"
 )
 
 type Pgn struct {
@@ -38,6 +39,16 @@ func SplitPgn(pgn string) (*Pgn, []Move) {
 	splitted := strings.SplitN(pgn, "\n\n", 2)
 	header := ParsePngHeader(splitted[0])
 	moves := ParsePgnBody(splitted[1])
+
+	// pgnReader := strings.NewReader(pgn)
+	// pgnData, err := demo.PGN(pgnReader) // returns *chess.PGN
+	// if err != nil {
+	// 	fmt.Println("failed to read the PGN")
+	// }
+	// game := demo.NewGame(pgnData)
+	// for _, move := range game.Moves() {
+	// 	fmt.Println("SAN:", move.String()) // or move.String()
+	// }
 	return header, moves
 }
 
