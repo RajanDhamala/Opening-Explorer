@@ -1,41 +1,15 @@
 package utils
 
 import (
-	// "encoding/json"
 	"fmt"
 	"strings"
+	// "encoding/json"
 	// demo "github.com/notnil/chess"
+	"chess/ProcessPipline"
+	"chess/Types"
 )
 
-type Pgn struct {
-	Event           string
-	Site            string
-	Date            string
-	White           string
-	Black           string
-	Result          string
-	CurrentPosition string
-	Timezone        string
-	ECO             string
-	ECOUrl          string
-	UTCDate         string
-	UTCTime         string
-	WhiteElo        string
-	BlackElo        string
-	TimeControl     string
-	Termination     string
-	StartTime       string
-	EndDate         string
-	EndTime         string
-	Link            string
-}
-
-type Move struct {
-	San   string
-	Clock string
-}
-
-func SplitPgn(pgn string) (*Pgn, []Move) {
+func SplitPgn(pgn string) (*types.Pgn, []types.Move) {
 	splitted := strings.SplitN(pgn, "\n\n", 2)
 	header := ParsePngHeader(splitted[0])
 	moves := ParsePgnBody(splitted[1])
@@ -52,8 +26,8 @@ func SplitPgn(pgn string) (*Pgn, []Move) {
 	return header, moves
 }
 
-func ParsePngHeader(header string) *Pgn {
-	pg := Pgn{}
+func ParsePngHeader(header string) *types.Pgn {
+	pg := types.Pgn{}
 	lines := strings.Split(header, "\n")
 	for _, line := range lines {
 		trimmed := strings.Trim(line, "[]")
@@ -110,9 +84,9 @@ func ParsePngHeader(header string) *Pgn {
 	return &pg
 }
 
-func ParsePgnBody(body string) []Move {
+func ParsePgnBody(body string) []types.Move {
 	bodyArray := strings.Fields(body)
-	var moves []Move
+	var moves []types.Move
 	// Result := ""
 
 	for i, item := range bodyArray {
@@ -140,7 +114,7 @@ func ParsePgnBody(body string) []Move {
 			continue
 		}
 
-		moves = append(moves, Move{
+		moves = append(moves, types.Move{
 			San: item,
 		})
 	}
@@ -149,4 +123,20 @@ func ParsePgnBody(body string) []Move {
 	// fmt.Println("result:", Result)
 	fmt.Println("moves array:", moves)
 	return moves
+}
+
+func ParseAllGames(allgames *types.UserGames, username string) {
+	for index, item := range allgames.Games {
+		if index > 30 {
+			return
+		}
+		yourcolor := "white"
+		if item.Black.Username == username {
+			yourcolor = "black"
+		}
+		splitted := strings.SplitN(item.PGN, "\n\n", 2)
+		header := ParsePngHeader(splitted[0])
+		moves := ParsePgnBody(splitted[1])
+		Processpipline.ProcessPipeline(item, moves, header, yourcolor)
+	}
 }
