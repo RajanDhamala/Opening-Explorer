@@ -1,11 +1,17 @@
 package types
 
+import (
+	"time"
+)
+
 type PositonInfo struct {
-	Count     int
-	DrawCount int
-	WinCount  int
-	LossCount int
-	GamesId   []string
+	Count          int
+	DrawCount      int
+	WinCount       int
+	LossCount      int
+	GamesId        []string
+	GamesRef       []*Game
+	ChildPositions []*PositonInfo
 }
 
 type Pgn struct {
@@ -86,4 +92,28 @@ type Timeline struct {
 
 type UserGames struct {
 	Games []*Game
+}
+
+type DbStore struct {
+	Id string
+
+	WhiteUsername string
+	BlackUsername string
+	WhiteRating   int
+	BlackRating   int
+	WhiteAccuracy *float64
+	BlackAccuracy *float64
+
+	Result      string
+	OpeningName string
+	ECO         string
+
+	Format      string
+	TimeControl string
+	Termination string
+
+	PlayedAt  string
+	FinalFen  string
+	Pgn       []Move
+	CreatedAt time.Time
 }
