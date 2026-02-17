@@ -8,17 +8,15 @@ import (
 	"net/http"
 	"strings"
 
-	// "github.com/notnil/chess"
 	"chess/Types"
 )
 
-var (
-	name     = "i_use_nvim_btw"
-	gameJSON interface{}
-)
-
-func FetchProcess() (*types.UserGames, error) {
+func FetchProcess(username string) (*types.UserGames, error) {
 	fmt.Println("welcome to the test server")
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil, errors.New("username is required")
+	}
 
 	response, err := http.Get("http://localhost:3000/archives")
 	if err != nil {
@@ -43,7 +41,7 @@ func FetchProcess() (*types.UserGames, error) {
 		Month: parts[len(parts)-1],
 	}
 
-	gameData, err := http.Get("http://localhost:3000/fetchGames/" + timeframe.Year + "/" + timeframe.Month + "/" + "tinku")
+	gameData, err := http.Get("http://localhost:3000/fetchGames/" + timeframe.Year + "/" + timeframe.Month + "/" + username)
 	if err != nil {
 		return nil, errors.New("error during API call")
 	}

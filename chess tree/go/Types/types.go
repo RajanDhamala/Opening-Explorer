@@ -10,7 +10,7 @@ type PositonInfo struct {
 	WinCount       int
 	LossCount      int
 	GamesId        []string
-	GamesRef       []*Game
+	GamesRef       []*DbStore
 	ChildPositions []*PositonInfo
 }
 
@@ -105,7 +105,7 @@ type DbStore struct {
 	BlackAccuracy *float64
 
 	Result      string
-	OpeningName string
+	OpeningName *string
 	ECO         string
 
 	Format      string
@@ -116,4 +116,5 @@ type DbStore struct {
 	FinalFen  string
 	Pgn       []Move
 	CreatedAt time.Time
+	Url       string
 }

@@ -27,6 +27,9 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 		blackAcc = &root.Accuracies.Black
 	}
 
+	openingName := GetOpeningName(root.ECO)
+
+	var name *string
 	gameData := types.DbStore{
 		Id:            root.UUID,
 		WhiteUsername: root.White.Username,
@@ -36,14 +39,16 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 		WhiteAccuracy: whiteAcc,
 		BlackAccuracy: blackAcc,
 		Result:        result,
-		OpeningName:   "demo rn",
-		ECO:           root.ECO,
+		OpeningName:   name,
+		ECO:           openingName,
 		Format:        root.TimeClass,
 		TimeControl:   root.TimeControl,
 		PlayedAt:      obj.Date,
 		FinalFen:      obj.CurrentPosition,
 		Pgn:           moves,
+		Termination:   obj.Termination,
 		CreatedAt:     time.Now(),
+		Url:           root.URL,
 	}
 	fmt.Println("gameData:", gameData)
 
@@ -59,7 +64,6 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 	case "draw":
 		IsDraw = true
 	}
-	GetOpeningName(root.ECO)
 	// return nil
 	var prevChildPosition *types.PositonInfo
 
@@ -69,7 +73,8 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 		}
 
 		if i == 15 {
-			eco, name, err := GetOpening(game)
+			eco, test, err := GetOpening(game)
+			name = &test
 			if err != nil {
 				fmt.Println("No opening found")
 			} else {
@@ -78,14 +83,15 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 		}
 
 		game.MoveStr(m.San)
-		position := game.FEN()
+		position := NormalizeFEN(game.FEN())
+		fmt.Println("noraml fen:", position)
 
 		var current *types.PositonInfo
 		if info, exists := HashMap[position]; exists {
 			current = info
 			current.Count++
 			current.GamesId = append(current.GamesId, root.UUID)
-			current.GamesRef = append(current.GamesRef, root)
+			current.GamesRef = append(current.GamesRef, &gameData)
 			current.WinCount += btoi(IsWin)
 			current.LossCount += btoi(IsLoss)
 			current.DrawCount += btoi(IsDraw)
@@ -96,7 +102,7 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 				WinCount:       btoi(IsWin),
 				LossCount:      btoi(IsLoss),
 				DrawCount:      btoi(IsDraw),
-				GamesRef:       []*types.Game{root},
+				GamesRef:       []*types.DbStore{&gameData},
 				ChildPositions: []*types.PositonInfo{},
 			}
 			HashMap[position] = current
@@ -165,4 +171,20 @@ func GetOpeningName(eco string) string {
 	trimmed := strings.TrimPrefix(eco, prefix)
 	fmt.Println("trimmed data:", trimmed)
 	return trimmed
+}
+
+func RetunPosition(png string) any {
+	if info, exists := HashMap[png]; exists {
+		return info
+	} else {
+		panic(0)
+	}
+}
+
+func NormalizeFEN(fen string) string {
+	parts := strings.Split(fen, " ")
+	if len(parts) < 4 {
+		return fen
+	}
+	return strings.Join(parts[:4], " ")
 }

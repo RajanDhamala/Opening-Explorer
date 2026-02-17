@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"chess/Opening"
 	"chess/ProcessPipline"
 	"chess/Utils"
 	"github.com/gofiber/fiber/v2"
@@ -11,6 +12,7 @@ import (
 
 func main() {
 	app := fiber.New()
+	opening.Loadtsv()
 	app.Use(logger.New())
 	app.Get("/", func(c *fiber.Ctx) error {
 		fmt.Println("server is up btw")
@@ -22,7 +24,7 @@ func main() {
 	app.Get("/png", func(c *fiber.Ctx) error {
 		fmt.Println("png route hitted")
 
-		usrGames, err := utils.FetchProcess()
+		usrGames, err := utils.FetchProcess("tinku")
 		if err != nil {
 			return c.Status(400).JSON(fiber.Map{
 				"error": err.Error(),
@@ -43,6 +45,29 @@ func main() {
 		return c.Status(200).JSON(fiber.Map{
 			"message": "fetched the game data",
 			"data":    games,
+		})
+	})
+
+	type Postdata struct {
+		Fen string `json:"fen"`
+	}
+
+	app.Post("/test", func(c *fiber.Ctx) error {
+		data := Postdata{}
+		err := c.BodyParser(&data)
+		if err != nil {
+			fmt.Println("failed to parse the body")
+			return c.Status(400).JSON(fiber.Map{
+				"error": "invalid data",
+			})
+		}
+		png := c.Params("png")
+		fmt.Println("req:", png)
+		resp := Processpipline.RetunPosition(png)
+		fmt.Println("data:", data)
+		return c.Status(200).JSON(fiber.Map{
+			"message": "welcome man",
+			"data:":   resp,
 		})
 	})
 
