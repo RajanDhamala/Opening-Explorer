@@ -61,9 +61,8 @@ func main() {
 				"error": "invalid data",
 			})
 		}
-		png := c.Params("png")
-		fmt.Println("req:", png)
-		resp := Processpipline.RetunPosition(png)
+		fmt.Println("req:", data.Fen)
+		resp := Processpipline.ReturnPosition(data.Fen)
 		fmt.Println("data:", data)
 		return c.Status(200).JSON(fiber.Map{
 			"message": "welcome man",

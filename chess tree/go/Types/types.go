@@ -12,6 +12,7 @@ type PositonInfo struct {
 	GamesId        []string
 	GamesRef       []*DbStore
 	ChildPositions []*PositonInfo
+	Fen            string
 }
 
 type Pgn struct {

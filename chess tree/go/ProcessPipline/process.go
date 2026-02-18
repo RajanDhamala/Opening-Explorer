@@ -10,7 +10,10 @@ import (
 	lib "github.com/notnil/chess"
 )
 
-var HashMap = make(map[string]*types.PositonInfo)
+var (
+	HashMap        = make(map[string]*types.PositonInfo)
+	ProcessedGames = make(map[string]bool)
+)
 
 func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color string) error {
 	game := lib.NewGame()
@@ -83,11 +86,12 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 		}
 
 		game.MoveStr(m.San)
-		position := NormalizeFEN(game.FEN())
-		fmt.Println("noraml fen:", position)
+		orginalPositon := game.FEN()
+		// position := NormalizeFEN(game.FEN())
+		fmt.Println("injected postion:", orginalPositon)
 
 		var current *types.PositonInfo
-		if info, exists := HashMap[position]; exists {
+		if info, exists := HashMap[orginalPositon]; exists {
 			current = info
 			current.Count++
 			current.GamesId = append(current.GamesId, root.UUID)
@@ -95,6 +99,7 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 			current.WinCount += btoi(IsWin)
 			current.LossCount += btoi(IsLoss)
 			current.DrawCount += btoi(IsDraw)
+			current.Fen = orginalPositon
 		} else {
 			current = &types.PositonInfo{
 				Count:          1,
@@ -104,9 +109,11 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 				DrawCount:      btoi(IsDraw),
 				GamesRef:       []*types.DbStore{&gameData},
 				ChildPositions: []*types.PositonInfo{},
+				Fen:            orginalPositon,
 			}
-			HashMap[position] = current
+			HashMap[orginalPositon] = current
 		}
+		ProcessedGames[root.UUID] = true
 
 		if prevChildPosition != nil {
 			prevChildPosition.ChildPositions = append(prevChildPosition.ChildPositions, current)
@@ -114,12 +121,6 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 
 		prevChildPosition = current
 	}
-	data := game.MoveHistory()
-	fmt.Println("History of moves:")
-	for _, move := range data {
-		fmt.Println(move)
-	}
-
 	return nil
 }
 
@@ -173,18 +174,21 @@ func GetOpeningName(eco string) string {
 	return trimmed
 }
 
-func RetunPosition(png string) any {
-	if info, exists := HashMap[png]; exists {
+func ReturnPosition(fenInput string) any {
+	// normalfen := NormalizeFEN(fenInput)
+	normalfen := fenInput
+	fmt.Println("noramal den:", normalfen)
+	if info, exists := HashMap[normalfen]; exists {
 		return info
-	} else {
-		panic(0)
 	}
+
+	return nil
 }
 
 func NormalizeFEN(fen string) string {
 	parts := strings.Split(fen, " ")
-	if len(parts) < 4 {
-		return fen
+	for len(parts) < 4 {
+		parts = append(parts, "-")
 	}
 	return strings.Join(parts[:4], " ")
 }
