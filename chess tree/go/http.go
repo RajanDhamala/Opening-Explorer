@@ -70,5 +70,19 @@ func main() {
 		})
 	})
 
+	app.Get("/game/:id", func(c *fiber.Ctx) error {
+		gameId := c.Params("id")
+		data := Processpipline.GetGameData(gameId)
+		if data == nil {
+			return c.Status(400).JSON(fiber.Map{
+				"error": "game not found",
+			})
+		}
+		return c.Status(200).JSON(fiber.Map{
+			"data":    data,
+			"message": "game data found",
+		})
+	})
+
 	app.Listen(":3030")
 }

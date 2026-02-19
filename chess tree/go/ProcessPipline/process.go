@@ -7,17 +7,22 @@ import (
 
 	// "errors"
 	"chess/Types"
-	lib "github.com/notnil/chess"
+	lib "github.com/corentings/chess/v2"
 )
 
 var (
 	HashMap        = make(map[string]*types.PositonInfo)
-	ProcessedGames = make(map[string]bool)
+	ProcessedGames = make(map[string]*types.DbStore)
 )
 
 func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color string) error {
+	if _, exists := ProcessedGames[root.UUID]; exists {
+		fmt.Println("game already processed")
+		return nil
+	}
+
 	game := lib.NewGame()
-	UpdateUnitialPositon(root)
+
 	result := obj.Result
 	conclusion := CheckIfUsrWon(result, color)
 	fmt.Println("conclusion:", conclusion)
@@ -68,7 +73,8 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 		IsDraw = true
 	}
 	// return nil
-	var prevChildPosition *types.PositonInfo
+
+	prevChildPosition := UpdateUnitialPositon(root, IsWin, IsLoss, IsDraw)
 
 	for i, m := range moves {
 		if i > 30 {
@@ -85,56 +91,60 @@ func ProcessPipeline(root *types.Game, moves []types.Move, obj *types.Pgn, color
 			}
 		}
 
-		game.MoveStr(m.San)
-		orginalPositon := game.FEN()
+		err := game.PushNotationMove(m.San, lib.AlgebraicNotation{}, nil)
+		if err != nil {
+			return fmt.Errorf("invalid SAN move %s: %w", m.San, err)
+		}
+
+		orginalPosition := game.Position().String()
+		parts := strings.Split(orginalPosition, " ")
+		normalizedFEN := strings.Join(parts[:3], " ")
 		// position := NormalizeFEN(game.FEN())
-		fmt.Println("injected postion:", orginalPositon)
+		fmt.Println("injected postion:", normalizedFEN)
+		data2store := types.ImpThing{
+			Move: m.San,
+			Fen:  normalizedFEN,
+		}
 
 		var current *types.PositonInfo
-		if info, exists := HashMap[orginalPositon]; exists {
+		var linear bool
+		if info, exists := HashMap[normalizedFEN]; exists {
 			current = info
 			current.Count++
 			current.GamesId = append(current.GamesId, root.UUID)
-			current.GamesRef = append(current.GamesRef, &gameData)
+			// current.GamesRef = append(current.GamesRef, &gameData)
 			current.WinCount += btoi(IsWin)
 			current.LossCount += btoi(IsLoss)
 			current.DrawCount += btoi(IsDraw)
-			current.Fen = orginalPositon
+			current.Fen = normalizedFEN
+			linear = true
 		} else {
 			current = &types.PositonInfo{
-				Count:          1,
-				GamesId:        []string{root.UUID},
-				WinCount:       btoi(IsWin),
-				LossCount:      btoi(IsLoss),
-				DrawCount:      btoi(IsDraw),
-				GamesRef:       []*types.DbStore{&gameData},
+				Count:     1,
+				GamesId:   []string{root.UUID},
+				WinCount:  btoi(IsWin),
+				LossCount: btoi(IsLoss),
+				DrawCount: btoi(IsDraw),
+				// GamesRef:       []*types.DbStore{&gameData},
 				ChildPositions: []*types.PositonInfo{},
-				Fen:            orginalPositon,
+				Fen:            normalizedFEN,
 			}
-			HashMap[orginalPositon] = current
+			HashMap[normalizedFEN] = current
+			linear = false
 		}
-		ProcessedGames[root.UUID] = true
+		ProcessedGames[root.UUID] = &gameData
 
 		if prevChildPosition != nil {
-			prevChildPosition.ChildPositions = append(prevChildPosition.ChildPositions, current)
+			// prevChildPosition.ChildPositions = append(prevChildPosition.ChildPositions, current)
+			if linear {
+			} else {
+				prevChildPosition.ChildFens = append(prevChildPosition.ChildFens, data2store)
+			}
 		}
 
 		prevChildPosition = current
 	}
 	return nil
-}
-
-func UpdateUnitialPositon(root *types.Game) {
-	if info, exists := HashMap["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"]; exists {
-		info.Count++
-		info.GamesId = append(info.GamesId, root.UUID)
-	} else {
-		data := types.PositonInfo{
-			Count:   1,
-			GamesId: []string{root.UUID},
-		}
-		HashMap["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"] = &data
-	}
 }
 
 func btoi(b bool) int {
@@ -175,8 +185,8 @@ func GetOpeningName(eco string) string {
 }
 
 func ReturnPosition(fenInput string) any {
-	// normalfen := NormalizeFEN(fenInput)
-	normalfen := fenInput
+	normalfen := NormalizeFEN(fenInput)
+	// normalfen := fenInput
 	fmt.Println("noramal den:", normalfen)
 	if info, exists := HashMap[normalfen]; exists {
 		return info
@@ -187,8 +197,42 @@ func ReturnPosition(fenInput string) any {
 
 func NormalizeFEN(fen string) string {
 	parts := strings.Split(fen, " ")
-	for len(parts) < 4 {
-		parts = append(parts, "-")
+	normalizedFEN := strings.Join(parts[:3], " ")
+	fmt.Println("normalized query:", normalizedFEN)
+	return normalizedFEN
+}
+
+func GetGameData(gameId string) *types.DbStore {
+	if info, exists := ProcessedGames[gameId]; exists {
+		fmt.Println("game found")
+		return info
+	} else {
+		fmt.Println("game data not found")
+		return nil
 	}
-	return strings.Join(parts[:4], " ")
+}
+
+func UpdateUnitialPositon(root *types.Game, IsWin bool, IsLoss bool, IsDraw bool) *types.PositonInfo {
+	startFEN := "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq"
+
+	if info, exists := HashMap[startFEN]; exists {
+		info.Count++
+		info.GamesId = append(info.GamesId, root.UUID)
+		info.WinCount += btoi(IsWin)
+		info.LossCount += btoi(IsLoss)
+		info.DrawCount += btoi(IsDraw)
+		return info
+	}
+
+	data := &types.PositonInfo{
+		Count:     1,
+		WinCount:  btoi(IsWin),
+		LossCount: btoi(IsLoss),
+		DrawCount: btoi(IsDraw),
+		GamesId:   []string{root.UUID},
+		Fen:       startFEN,
+	}
+
+	HashMap[startFEN] = data
+	return data
 }

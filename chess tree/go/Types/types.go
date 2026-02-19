@@ -13,6 +13,7 @@ type PositonInfo struct {
 	GamesRef       []*DbStore
 	ChildPositions []*PositonInfo
 	Fen            string
+	ChildFens      []ImpThing
 }
 
 type Pgn struct {
@@ -118,4 +119,9 @@ type DbStore struct {
 	Pgn       []Move
 	CreatedAt time.Time
 	Url       string
+}
+
+type ImpThing struct {
+	Fen  string
+	Move string
 }

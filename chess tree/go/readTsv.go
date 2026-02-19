@@ -6,6 +6,13 @@ import (
 	"os"
 )
 
+type OpeningObj struct {
+	ECO  string
+	Name string
+	Fen  string
+	Pgn  string
+}
+
 func main() {
 	files := []string{
 		"Opening/a.tsv",
