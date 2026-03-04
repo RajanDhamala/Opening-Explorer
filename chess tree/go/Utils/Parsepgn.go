@@ -140,3 +140,20 @@ func ParseAllGames(allgames *types.UserGames, username string) {
 		Processpipline.ProcessPipeline(item, moves, header, yourcolor)
 	}
 }
+
+func EvaluateGames(allgames *types.UserGames, username string) []types.Move {
+	if allgames == nil || len(allgames.Games) == 0 {
+		return nil
+	}
+
+	item := allgames.Games[1]
+
+	splitted := strings.SplitN(item.PGN, "\n\n", 2)
+	if len(splitted) < 2 {
+		return nil
+	}
+
+	moves := ParsePgnBody(splitted[1])
+	fmt.Print("game length:", len(moves))
+	return moves
+}
