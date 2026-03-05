@@ -154,6 +154,7 @@ func EvaluateGames(allgames *types.UserGames, username string) []types.Move {
 	}
 
 	moves := ParsePgnBody(splitted[1])
-	fmt.Print("game length:", len(moves))
+	fmt.Println("game length:", len(moves))
+	fmt.Println("game url:", item.URL)
 	return moves
 }

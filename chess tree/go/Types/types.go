@@ -125,3 +125,18 @@ type ImpThing struct {
 	Fen  string
 	Move string
 }
+
+type PositonEval struct {
+	Move       string
+	Fen        string
+	Evaluation EvalResult
+}
+
+type EvalResult struct {
+	BestMove string
+	Ponder   string
+	PV       []string
+	Depth    int
+	ScoreCP  *int
+	Mate     *int
+}
