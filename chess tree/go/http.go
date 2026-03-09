@@ -105,8 +105,8 @@ func main() {
 			})
 		}
 		username := "I_use_NVIM_Btw"
-		moves := utils.EvaluateGames(usrGames, username)
-		Processpipline.PlayGame(moves, client)
+		moves, isWhite := utils.EvaluateGames(usrGames, username)
+		Processpipline.PlayGame(moves, client, isWhite)
 
 		// result, err := client.Evaluate(context.Background(), stockfish.EvalRequest{
 		// 	FEN:      "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",

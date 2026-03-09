@@ -141,20 +141,27 @@ func ParseAllGames(allgames *types.UserGames, username string) {
 	}
 }
 
-func EvaluateGames(allgames *types.UserGames, username string) []types.Move {
+func EvaluateGames(allgames *types.UserGames, username string) ([]types.Move, bool) {
 	if allgames == nil || len(allgames.Games) == 0 {
-		return nil
+		return nil, false
 	}
 
 	item := allgames.Games[1]
+	isWhite := true
+
+	if item.White.Username != "tinku" {
+		fmt.Println("ur white btw")
+		isWhite = false
+	}
 
 	splitted := strings.SplitN(item.PGN, "\n\n", 2)
 	if len(splitted) < 2 {
-		return nil
+		return nil, false
 	}
 
+	// isWhite := true
 	moves := ParsePgnBody(splitted[1])
 	fmt.Println("game length:", len(moves))
 	fmt.Println("game url:", item.URL)
-	return moves
+	return moves, isWhite
 }
