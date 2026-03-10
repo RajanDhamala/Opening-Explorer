@@ -34,7 +34,7 @@ func FetchProcess(username string) (*types.UserGames, error) {
 		return nil, errors.New("failed to parse the JSON")
 	}
 
-	url := igotdata.Data.Archives[len(igotdata.Data.Archives)-1]
+	url := igotdata.Data.Archives[len(igotdata.Data.Archives)-4]
 	parts := strings.Split(url, "/")
 	timeframe := types.Timeline{
 		Year:  parts[len(parts)-2],

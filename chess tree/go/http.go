@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"chess/Opening"
+	// "chess/Opening"
 	"chess/ProcessPipline"
 	"chess/Utils"
 
@@ -23,7 +23,7 @@ func main() {
 	}
 
 	app := fiber.New()
-	opening.Loadtsv()
+	// opening.Loadtsv()
 	app.Use(logger.New())
 	app.Get("/", func(c *fiber.Ctx) error {
 		fmt.Println("server is up btw")

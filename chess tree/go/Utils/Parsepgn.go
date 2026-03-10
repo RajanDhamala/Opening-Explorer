@@ -146,10 +146,23 @@ func EvaluateGames(allgames *types.UserGames, username string) ([]types.Move, bo
 		return nil, false
 	}
 
-	item := allgames.Games[1]
+	// item := allgames.Games[1]
+
+	var item types.Game
+	count := 0
+	for _, game := range allgames.Games {
+		if game.TimeClass == "bullet" {
+			count++
+			fmt.Println("game found in bullet")
+			if count == 3 {
+				item = *game
+				break
+			}
+		}
+	}
 	isWhite := true
 
-	if item.White.Username != "tinku" {
+	if item.White.Username != "I_use_NVIM_Btw" {
 		fmt.Println("ur white btw")
 		isWhite = false
 	}
@@ -159,7 +172,7 @@ func EvaluateGames(allgames *types.UserGames, username string) ([]types.Move, bo
 		return nil, false
 	}
 
-	// isWhite := true
+	// isWhite = false
 	moves := ParsePgnBody(splitted[1])
 	fmt.Println("game length:", len(moves))
 	fmt.Println("game url:", item.URL)
