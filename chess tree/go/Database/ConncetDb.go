@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var dbPool *pgxpool.Pool
+var DbPool *pgxpool.Pool
 
 func ConnectDB() (*pgxpool.Pool, error) {
 	dsn := os.Getenv("DATABASE_URL")

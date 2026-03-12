@@ -140,3 +140,78 @@ type EvalResult struct {
 	ScoreCP  *int
 	Mate     *int
 }
+
+type MoveIssueType string
+
+const (
+	MoveIssueInaccuracy        MoveIssueType = "inaccuracy"
+	MoveIssueMistake           MoveIssueType = "mistake"
+	MoveIssueBlunder           MoveIssueType = "blunder"
+	MoveIssueMissedOpportunity MoveIssueType = "missed_opportunity"
+	MoveIssueForcedMate        MoveIssueType = "forced_mate_available"
+	MoveIssueForcedMateMissed  MoveIssueType = "forced_mate_missed"
+	MoveIssueBeingMated        MoveIssueType = "being_mated"
+)
+
+type MoveIssue struct {
+	MoveIndex      int
+	MoveSAN        string
+	MoveUCI        string
+	Fen            string
+	SideToMove     string
+	PlayerColor    string
+	UserColor      string
+	IssueType      MoveIssueType
+	PlayedBestMove bool
+
+	BestMove string
+	Ponder   string
+	PV       []string
+	Depth    int
+	ScoreCP  *int
+	Mate     *int
+
+	AfterScoreCP *int
+	AfterMate    *int
+
+	WinProbBefore float64
+	WinProbAfter  float64
+}
+
+type EvalGameInput struct {
+	GameID         string
+	GameURL        string
+	WhiteUsername  string
+	BlackUsername  string
+	WhiteRating    int
+	BlackRating    int
+	OpponentName   string
+	OpponentRating int
+	PlayerColor    string
+	TimeClass      string
+	Result         string
+	Moves          []Move
+	IsWhite        bool
+}
+
+type EvalGameResult struct {
+	GameID         string
+	GameURL        string
+	WhiteUsername  string
+	BlackUsername  string
+	WhiteRating    int
+	BlackRating    int
+	OpponentName   string
+	OpponentRating int
+	PlayerColor    string
+	TimeClass      string
+	Result         string
+	IssueCount     int
+	Issues         []MoveIssue
+}
+
+type JwtObj struct {
+	ID       string
+	Fullname string
+	Email    string
+}

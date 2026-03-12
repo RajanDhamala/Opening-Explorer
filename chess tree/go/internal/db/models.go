@@ -53,6 +53,21 @@ func (ns NullPlanType) Value() (driver.Value, error) {
 	return string(ns.PlanType), nil
 }
 
+type Game struct {
+	ID            pgtype.UUID `json:"_id"`
+	Gameurl       string      `json:"gameurl"`
+	Whiteusername string      `json:"whiteusername"`
+	Blackusername string      `json:"blackusername"`
+	Whiterating   int32       `json:"whiterating"`
+	Blackrating   int32       `json:"blackrating"`
+	Playercolor   string      `json:"playercolor"`
+	Timeclass     string      `json:"timeclass"`
+	Result        string      `json:"result"`
+	Issuecount    int32       `json:"issuecount"`
+	UserID        int32       `json:"user_id"`
+	Createdat     pgtype.Date `json:"createdat"`
+}
+
 type User struct {
 	ID           int32       `json:"_id"`
 	Fullname     string      `json:"fullname"`

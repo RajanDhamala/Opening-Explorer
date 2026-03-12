@@ -7,7 +7,23 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const changePassword = `-- name: ChangePassword :exec
+UPDATE users SET password=$1 WHERE _id=$2
+`
+
+type ChangePasswordParams struct {
+	Password string `json:"password"`
+	ID       int32  `json:"_id"`
+}
+
+func (q *Queries) ChangePassword(ctx context.Context, arg ChangePasswordParams) error {
+	_, err := q.db.Exec(ctx, changePassword, arg.Password, arg.ID)
+	return err
+}
 
 const checkIfusrExists = `-- name: CheckIfusrExists :one
 SELECT _id FROM users WHERE email=$1
@@ -20,20 +36,99 @@ func (q *Queries) CheckIfusrExists(ctx context.Context, email string) (int32, er
 	return _id, err
 }
 
+const createGame = `-- name: CreateGame :exec
+INSERT INTO Games (_id, gameurl, whiteusername, blackusername, whiterating, blackrating, playercolor, timeclass, result, issuecount, user_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+`
+
+type CreateGameParams struct {
+	ID            pgtype.UUID `json:"_id"`
+	Gameurl       string      `json:"gameurl"`
+	Whiteusername string      `json:"whiteusername"`
+	Blackusername string      `json:"blackusername"`
+	Whiterating   int32       `json:"whiterating"`
+	Blackrating   int32       `json:"blackrating"`
+	Playercolor   string      `json:"playercolor"`
+	Timeclass     string      `json:"timeclass"`
+	Result        string      `json:"result"`
+	Issuecount    int32       `json:"issuecount"`
+	UserID        int32       `json:"user_id"`
+}
+
+func (q *Queries) CreateGame(ctx context.Context, arg CreateGameParams) error {
+	_, err := q.db.Exec(ctx, createGame,
+		arg.ID,
+		arg.Gameurl,
+		arg.Whiteusername,
+		arg.Blackusername,
+		arg.Whiterating,
+		arg.Blackrating,
+		arg.Playercolor,
+		arg.Timeclass,
+		arg.Result,
+		arg.Issuecount,
+		arg.UserID,
+	)
+	return err
+}
+
+const getYourGame = `-- name: GetYourGame :many
+SELECT _id, gameurl, whiteusername, blackusername, whiterating, blackrating, playercolor, timeclass, result, issuecount, user_id, createdat FROM games WHERE user_id=$1
+`
+
+func (q *Queries) GetYourGame(ctx context.Context, userID int32) ([]Game, error) {
+	rows, err := q.db.Query(ctx, getYourGame, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Game
+	for rows.Next() {
+		var i Game
+		if err := rows.Scan(
+			&i.ID,
+			&i.Gameurl,
+			&i.Whiteusername,
+			&i.Blackusername,
+			&i.Whiterating,
+			&i.Blackrating,
+			&i.Playercolor,
+			&i.Timeclass,
+			&i.Result,
+			&i.Issuecount,
+			&i.UserID,
+			&i.Createdat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const loginUser = `-- name: LoginUser :one
-SELECT _id, fullname,email FROM users WHERE email=$1
+SELECT _id, fullname,email,password FROM users WHERE email=$1
 `
 
 type LoginUserRow struct {
 	ID       int32  `json:"_id"`
 	Fullname string `json:"fullname"`
 	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 func (q *Queries) LoginUser(ctx context.Context, email string) (LoginUserRow, error) {
 	row := q.db.QueryRow(ctx, loginUser, email)
 	var i LoginUserRow
-	err := row.Scan(&i.ID, &i.Fullname, &i.Email)
+	err := row.Scan(
+		&i.ID,
+		&i.Fullname,
+		&i.Email,
+		&i.Password,
+	)
 	return i, err
 }
 
