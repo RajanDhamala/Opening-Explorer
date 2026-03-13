@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 
+	"chess/Controllers"
 	// "chess/Opening"
 	"chess/Database"
 	"chess/Routes"
 	"chess/Utils"
+	"chess/internal/db"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -30,6 +32,7 @@ func main() {
 		fmt.Println("error while starting Stockfish:", errs)
 		return
 	}
+	controller := Controllers.NewController(db.New(dbPool))
 
 	app := fiber.New()
 	// opening.Loadtsv()
@@ -46,8 +49,8 @@ func main() {
 		})
 	})
 
-	Routes.UserRouter(app)
-	Routes.GameRouter(app)
+	Routes.UserRouter(app, controller)
+	Routes.GameRouter(app, controller)
 	if err := app.Listen(":3030"); err != nil {
 		fmt.Println("server failed to start:", err)
 	}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"chess/Database"
 	"chess/ProcessPipline"
 	// "chess/Types"
 	"chess/Utils"
@@ -16,20 +15,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func StartProcessing(c *fiber.Ctx) error {
+func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
 	if !ok || userClaims == nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "unauthorized",
 		})
-	}
-	if userQueries == nil {
-		if Database.DbPool == nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "database not initialized",
-			})
-		}
-		userQueries = db.New(Database.DbPool)
 	}
 	id, err := strconv.Atoi(userClaims.ID)
 	if err != nil || id <= 0 {
@@ -44,7 +35,7 @@ func StartProcessing(c *fiber.Ctx) error {
 	}
 	userID := int32(id)
 	if userClaims.Email != "" {
-		dbID, err := userQueries.CheckIfusrExists(c.Context(), userClaims.Email)
+		dbID, err := ctrl.queries.CheckIfusrExists(c.Context(), userClaims.Email)
 		if err == nil {
 			userID = dbID
 		} else if err == pgx.ErrNoRows {
@@ -84,7 +75,7 @@ func StartProcessing(c *fiber.Ctx) error {
 			continue
 		}
 
-		err := userQueries.CreateGame(c.Context(), db.CreateGameParams{
+		err := ctrl.queries.CreateGame(c.Context(), db.CreateGameParams{
 			ID:            gameID,
 			Gameurl:       item.GameURL,
 			Whiteusername: item.WhiteUsername,
@@ -117,20 +108,12 @@ func StartProcessing(c *fiber.Ctx) error {
 	})
 }
 
-func GetProcessedGames(c *fiber.Ctx) error {
+func (ctrl *Controller) GetProcessedGames(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
 	if !ok || userClaims == nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "unauthorized",
 		})
-	}
-	if userQueries == nil {
-		if Database.DbPool == nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "database not initialized",
-			})
-		}
-		userQueries = db.New(Database.DbPool)
 	}
 	id, err := strconv.Atoi(userClaims.ID)
 	if err != nil || id <= 0 {
@@ -138,7 +121,7 @@ func GetProcessedGames(c *fiber.Ctx) error {
 			"error": "invalid user id in token",
 		})
 	}
-	game, err := userQueries.GetYourGame(c.Context(), int32(id))
+	game, err := ctrl.queries.GetYourGame(c.Context(), int32(id))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "failed to fetch game",

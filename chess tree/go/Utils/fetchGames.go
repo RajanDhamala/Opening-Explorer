@@ -28,13 +28,19 @@ func FetchProcess(username string) (*types.UserGames, error) {
 	if err != nil {
 		return nil, errors.New("failed to read the body")
 	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("archives endpoint returned %d: %s", response.StatusCode, strings.TrimSpace(string(data)))
+	}
 
 	igotdata := types.ArchiveResponse{}
 	if err := json.Unmarshal(data, &igotdata); err != nil {
 		return nil, errors.New("failed to parse the JSON")
 	}
 
-	url := igotdata.Data.Archives[len(igotdata.Data.Archives)-4]
+	if len(igotdata.Data.Archives) == 0 {
+		return nil, errors.New("no archives found")
+	}
+	url := igotdata.Data.Archives[len(igotdata.Data.Archives)-1]
 	parts := strings.Split(url, "/")
 	timeframe := types.Timeline{
 		Year:  parts[len(parts)-2],
@@ -50,6 +56,9 @@ func FetchProcess(username string) (*types.UserGames, error) {
 	parsedData, err := io.ReadAll(gameData.Body)
 	if err != nil {
 		return nil, errors.New("failed to read game data")
+	}
+	if gameData.StatusCode < 200 || gameData.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetchGames endpoint returned %d: %s", gameData.StatusCode, strings.TrimSpace(string(parsedData)))
 	}
 
 	intermediate := types.IntermeObj{}

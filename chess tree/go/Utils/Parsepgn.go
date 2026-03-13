@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"fmt"
 	"strings"
 	// "encoding/json"
 	// demo "github.com/notnil/chess"
@@ -121,7 +120,6 @@ func ParsePgnBody(body string) []types.Move {
 	// b, _ := json.MarshalIndent(moves, "", " ")
 	// fmt.Println(string(b))
 	// fmt.Println("result:", Result)
-	fmt.Println("moves array:", moves)
 	return moves
 }
 
@@ -141,40 +139,60 @@ func ParseAllGames(allgames *types.UserGames, username string) {
 	}
 }
 
-func EvaluateGames(allgames *types.UserGames, username string) ([]types.Move, bool) {
+func EvaluateAllGames(allgames *types.UserGames, username string) []types.EvalGameInput {
 	if allgames == nil || len(allgames.Games) == 0 {
-		return nil, false
+		return nil
 	}
 
-	// item := allgames.Games[1]
+	evalGames := make([]types.EvalGameInput, 0, len(allgames.Games))
 
-	var item types.Game
-	count := 0
 	for _, game := range allgames.Games {
-		if game.TimeClass == "bullet" {
-			count++
-			fmt.Println("game found in bullet")
-			if count == 3 {
-				item = *game
-				break
-			}
+		if game == nil {
+			continue
 		}
-	}
-	isWhite := true
 
-	if item.White.Username != "I_use_NVIM_Btw" {
-		fmt.Println("ur white btw")
-		isWhite = false
+		splitted := strings.SplitN(game.PGN, "\n\n", 2)
+		if len(splitted) < 2 {
+			continue
+		}
+		moves := ParsePgnBody(splitted[1])
+		if len(moves) == 0 {
+			continue
+		}
+
+		isWhite := strings.EqualFold(game.White.Username, username)
+		isBlack := strings.EqualFold(game.Black.Username, username)
+		if !isWhite && !isBlack {
+			continue
+		}
+
+		opponentName := game.Black.Username
+		opponentRating := game.Black.Rating
+		playerColor := "white"
+		playerResult := game.White.Result
+		if !isWhite {
+			opponentName = game.White.Username
+			opponentRating = game.White.Rating
+			playerColor = "black"
+			playerResult = game.Black.Result
+		}
+
+		evalGames = append(evalGames, types.EvalGameInput{
+			GameID:         game.UUID,
+			GameURL:        game.URL,
+			WhiteUsername:  game.White.Username,
+			BlackUsername:  game.Black.Username,
+			WhiteRating:    game.White.Rating,
+			BlackRating:    game.Black.Rating,
+			OpponentName:   opponentName,
+			OpponentRating: opponentRating,
+			PlayerColor:    playerColor,
+			TimeClass:      game.TimeClass,
+			Result:         playerResult,
+			Moves:          moves,
+			IsWhite:        isWhite,
+		})
 	}
 
-	splitted := strings.SplitN(item.PGN, "\n\n", 2)
-	if len(splitted) < 2 {
-		return nil, false
-	}
-
-	// isWhite = false
-	moves := ParsePgnBody(splitted[1])
-	fmt.Println("game length:", len(moves))
-	fmt.Println("game url:", item.URL)
-	return moves, isWhite
+	return evalGames
 }

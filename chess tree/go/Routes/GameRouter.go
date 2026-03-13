@@ -6,7 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func GameRouter(app *fiber.App) {
+func GameRouter(app *fiber.App, controller *Controllers.Controller) {
 	GameRouter := app.Group("/games")
 
 	GameRouter.Get("/", func(c *fiber.Ctx) error {
@@ -15,7 +15,7 @@ func GameRouter(app *fiber.App) {
 		})
 	})
 
-	GameRouter.Get("/process", middlewares.UserAuthenticate, Controllers.StartProcessing)
+	GameRouter.Get("/process", middlewares.UserAuthenticate, controller.StartProcessing)
 
-	GameRouter.Get("/list", middlewares.UserAuthenticate, Controllers.GetProcessedGames)
+	GameRouter.Get("/list", middlewares.UserAuthenticate, controller.GetProcessedGames)
 }

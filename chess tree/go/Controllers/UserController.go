@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"time"
 
-	"chess/Database"
 	"chess/Types"
 	"chess/Utils"
 	"chess/internal/db"
@@ -14,15 +13,13 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-var userQueries *db.Queries
-
 type RegisterUserReq struct {
 	Email    string `json:"email"`
 	FullName string `json:"fullname"`
 	Password string `json:"password"`
 }
 
-func RegisterUser(c *fiber.Ctx) error {
+func (ctrl *Controller) RegisterUser(c *fiber.Ctx) error {
 	data := RegisterUserReq{}
 
 	if errr := c.BodyParser(&data); errr != nil {
@@ -32,16 +29,9 @@ func RegisterUser(c *fiber.Ctx) error {
 		})
 	}
 
-	if Database.DbPool == nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "database not initialized",
-		})
-	}
-	userQueries = db.New(Database.DbPool)
-
 	email := data.Email
 
-	_, err := userQueries.CheckIfusrExists(c.Context(), email)
+	_, err := ctrl.queries.CheckIfusrExists(c.Context(), email)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -60,7 +50,7 @@ func RegisterUser(c *fiber.Ctx) error {
 		})
 	}
 
-	id, err := userQueries.RegisterUser(c.Context(), db.RegisterUserParams{
+	id, err := ctrl.queries.RegisterUser(c.Context(), db.RegisterUserParams{
 		Email:    data.Email,
 		Password: hashedpwd,
 		Fullname: data.FullName,
@@ -81,7 +71,7 @@ type LoginReq struct {
 	Password string `json:"password"`
 }
 
-func LoginUser(c *fiber.Ctx) error {
+func (ctrl *Controller) LoginUser(c *fiber.Ctx) error {
 	fmt.Println("user login called")
 
 	data := LoginReq{}
@@ -93,15 +83,8 @@ func LoginUser(c *fiber.Ctx) error {
 		})
 	}
 
-	if Database.DbPool == nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "database not initialized",
-		})
-	}
-	userQueries = db.New(Database.DbPool)
-
 	email := data.Email
-	user, err := userQueries.LoginUser(c.Context(), email)
+	user, err := ctrl.queries.LoginUser(c.Context(), email)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			fmt.Println("User does NOT exist")

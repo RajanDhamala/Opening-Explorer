@@ -6,7 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func UserRouter(app *fiber.App) {
+func UserRouter(app *fiber.App, controller *Controllers.Controller) {
 	UserRouter := app.Group("/users")
 
 	UserRouter.Get("/", func(c *fiber.Ctx) error {
@@ -16,6 +16,6 @@ func UserRouter(app *fiber.App) {
 	})
 
 	UserRouter.Get("/me", middlewares.AuthMe)
-	UserRouter.Post("/register", Controllers.RegisterUser)
-	UserRouter.Post("/login", Controllers.LoginUser)
+	UserRouter.Post("/register", controller.RegisterUser)
+	UserRouter.Post("/login", controller.LoginUser)
 }
