@@ -133,3 +133,31 @@ func (ctrl *Controller) LoginUser(c *fiber.Ctx) error {
 		"message": "user created succesfully",
 	})
 }
+
+func (ctrl *Controller) LogoutUser(c *fiber.Ctx) error {
+	expired := time.Now().Add(-1 * time.Hour)
+
+	c.Cookie(&fiber.Cookie{
+		Name:     "accessToken",
+		Value:    "",
+		Expires:  expired,
+		MaxAge:   -1,
+		HTTPOnly: true,
+		Secure:   false,
+		Path:     "/",
+	})
+
+	c.Cookie(&fiber.Cookie{
+		Name:     "refreshToken",
+		Value:    "",
+		Expires:  expired,
+		MaxAge:   -1,
+		HTTPOnly: true,
+		Secure:   false,
+		Path:     "/",
+	})
+
+	return c.Status(200).JSON(fiber.Map{
+		"message": "logged out",
+	})
+}

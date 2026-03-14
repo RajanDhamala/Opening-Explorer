@@ -18,4 +18,5 @@ func UserRouter(app *fiber.App, controller *Controllers.Controller) {
 	UserRouter.Get("/me", middlewares.AuthMe)
 	UserRouter.Post("/register", controller.RegisterUser)
 	UserRouter.Post("/login", controller.LoginUser)
+	UserRouter.Post("/logout", middlewares.UserAuthenticate, controller.LogoutUser)
 }
