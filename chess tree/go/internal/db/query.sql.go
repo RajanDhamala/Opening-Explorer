@@ -72,6 +72,93 @@ func (q *Queries) CreateGame(ctx context.Context, arg CreateGameParams) error {
 	return err
 }
 
+const createGamesBulk = `-- name: CreateGamesBulk :exec
+WITH payload AS (
+  SELECT
+    $1::uuid[] AS ids,
+    $2::text[] AS gameurls,
+    $3::text[] AS whiteusernames,
+    $4::text[] AS blackusernames,
+    $5::int4[] AS whiteratings,
+    $6::int4[] AS blackratings,
+    $7::text[] AS playercolors,
+    $8::text[] AS timeclasses,
+    $9::text[] AS results,
+    $10::int4[] AS issuecounts,
+    $11::int4[] AS userids
+)
+INSERT INTO games (
+  _id,
+  gameurl,
+  whiteusername,
+  blackusername,
+  whiterating,
+  blackrating,
+  playercolor,
+  timeclass,
+  result,
+  issuecount,
+  user_id
+)
+SELECT
+  payload.ids[idx],
+  payload.gameurls[idx],
+  payload.whiteusernames[idx],
+  payload.blackusernames[idx],
+  payload.whiteratings[idx],
+  payload.blackratings[idx],
+  payload.playercolors[idx],
+  payload.timeclasses[idx],
+  payload.results[idx],
+  payload.issuecounts[idx],
+  payload.userids[idx]
+FROM payload,
+  generate_subscripts(payload.ids, 1) AS idx
+ON CONFLICT (_id) DO UPDATE
+SET
+  gameurl = EXCLUDED.gameurl,
+  whiteusername = EXCLUDED.whiteusername,
+  blackusername = EXCLUDED.blackusername,
+  whiterating = EXCLUDED.whiterating,
+  blackrating = EXCLUDED.blackrating,
+  playercolor = EXCLUDED.playercolor,
+  timeclass = EXCLUDED.timeclass,
+  result = EXCLUDED.result,
+  issuecount = EXCLUDED.issuecount,
+  user_id = EXCLUDED.user_id
+`
+
+type CreateGamesBulkParams struct {
+	Ids            []pgtype.UUID `json:"ids"`
+	Gameurls       []string      `json:"gameurls"`
+	Whiteusernames []string      `json:"whiteusernames"`
+	Blackusernames []string      `json:"blackusernames"`
+	Whiteratings   []int32       `json:"whiteratings"`
+	Blackratings   []int32       `json:"blackratings"`
+	Playercolors   []string      `json:"playercolors"`
+	Timeclasses    []string      `json:"timeclasses"`
+	Results        []string      `json:"results"`
+	Issuecounts    []int32       `json:"issuecounts"`
+	Userids        []int32       `json:"userids"`
+}
+
+func (q *Queries) CreateGamesBulk(ctx context.Context, arg CreateGamesBulkParams) error {
+	_, err := q.db.Exec(ctx, createGamesBulk,
+		arg.Ids,
+		arg.Gameurls,
+		arg.Whiteusernames,
+		arg.Blackusernames,
+		arg.Whiteratings,
+		arg.Blackratings,
+		arg.Playercolors,
+		arg.Timeclasses,
+		arg.Results,
+		arg.Issuecounts,
+		arg.Userids,
+	)
+	return err
+}
+
 const getYourGame = `-- name: GetYourGame :many
 SELECT _id, gameurl, whiteusername, blackusername, whiterating, blackrating, playercolor, timeclass, result, issuecount, user_id, createdat FROM games WHERE user_id=$1
 `

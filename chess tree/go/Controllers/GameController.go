@@ -61,6 +61,19 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 
 	totalIssues := 0
 	gamesWithIssues := 0
+
+	ids := make([]pgtype.UUID, 0, len(gameResults))
+	gameurls := make([]string, 0, len(gameResults))
+	whiteusernames := make([]string, 0, len(gameResults))
+	blackusernames := make([]string, 0, len(gameResults))
+	whiteratings := make([]int32, 0, len(gameResults))
+	blackratings := make([]int32, 0, len(gameResults))
+	playercolors := make([]string, 0, len(gameResults))
+	timeclasses := make([]string, 0, len(gameResults))
+	results := make([]string, 0, len(gameResults))
+	issuecounts := make([]int32, 0, len(gameResults))
+	userids := make([]int32, 0, len(gameResults))
+
 	for _, item := range gameResults {
 		totalIssues += item.IssueCount
 
@@ -75,25 +88,38 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 			continue
 		}
 
-		err := ctrl.queries.CreateGame(c.Context(), db.CreateGameParams{
-			ID:            gameID,
-			Gameurl:       item.GameURL,
-			Whiteusername: item.WhiteUsername,
-			Blackusername: item.BlackUsername,
-			Whiterating:   int32(item.WhiteRating),
-			Blackrating:   int32(item.BlackRating),
-			Playercolor:   item.PlayerColor,
-			Timeclass:     item.TimeClass,
-			Result:        item.Result,
-			Issuecount:    int32(item.IssueCount),
-			UserID:        userID,
-		})
+		ids = append(ids, gameID)
+		gameurls = append(gameurls, item.GameURL)
+		whiteusernames = append(whiteusernames, item.WhiteUsername)
+		blackusernames = append(blackusernames, item.BlackUsername)
+		whiteratings = append(whiteratings, int32(item.WhiteRating))
+		blackratings = append(blackratings, int32(item.BlackRating))
+		playercolors = append(playercolors, item.PlayerColor)
+		timeclasses = append(timeclasses, item.TimeClass)
+		results = append(results, item.Result)
+		issuecounts = append(issuecounts, int32(item.IssueCount))
+		userids = append(userids, userID)
+	}
 
+	if len(ids) > 0 {
+		err := ctrl.queries.CreateGamesBulk(c.Context(), db.CreateGamesBulkParams{
+			Ids:            ids,
+			Gameurls:       gameurls,
+			Whiteusernames: whiteusernames,
+			Blackusernames: blackusernames,
+			Whiteratings:   whiteratings,
+			Blackratings:   blackratings,
+			Playercolors:   playercolors,
+			Timeclasses:    timeclasses,
+			Results:        results,
+			Issuecounts:    issuecounts,
+			Userids:        userids,
+		})
 		if err != nil {
-			failedCount++
-			fmt.Println("failed to insert game:", err)
+			failedCount += len(ids)
+			fmt.Println("failed to bulk upsert games:", err)
 		} else {
-			successCount++
+			successCount += len(ids)
 		}
 	}
 
