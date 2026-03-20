@@ -86,6 +86,22 @@ WITH payload AS (
     $9::text[] AS results,
     $10::int4[] AS issuecounts,
     $11::int4[] AS userids
+),
+rows AS (
+  SELECT
+    ids_row.id,
+    payload.gameurls[ids_row.idx] AS gameurl,
+    payload.whiteusernames[ids_row.idx] AS whiteusername,
+    payload.blackusernames[ids_row.idx] AS blackusername,
+    payload.whiteratings[ids_row.idx] AS whiterating,
+    payload.blackratings[ids_row.idx] AS blackrating,
+    payload.playercolors[ids_row.idx] AS playercolor,
+    payload.timeclasses[ids_row.idx] AS timeclass,
+    payload.results[ids_row.idx] AS result,
+    payload.issuecounts[ids_row.idx] AS issuecount,
+    payload.userids[ids_row.idx] AS user_id
+  FROM payload
+  CROSS JOIN LATERAL unnest(payload.ids) WITH ORDINALITY AS ids_row(id, idx)
 )
 INSERT INTO games (
   _id,
@@ -101,19 +117,18 @@ INSERT INTO games (
   user_id
 )
 SELECT
-  payload.ids[idx],
-  payload.gameurls[idx],
-  payload.whiteusernames[idx],
-  payload.blackusernames[idx],
-  payload.whiteratings[idx],
-  payload.blackratings[idx],
-  payload.playercolors[idx],
-  payload.timeclasses[idx],
-  payload.results[idx],
-  payload.issuecounts[idx],
-  payload.userids[idx]
-FROM payload,
-  generate_subscripts(payload.ids, 1) AS idx
+  rows.id,
+  rows.gameurl,
+  rows.whiteusername,
+  rows.blackusername,
+  rows.whiterating,
+  rows.blackrating,
+  rows.playercolor,
+  rows.timeclass,
+  rows.result,
+  rows.issuecount,
+  rows.user_id
+FROM rows
 ON CONFLICT (_id) DO UPDATE
 SET
   gameurl = EXCLUDED.gameurl,
@@ -157,6 +172,132 @@ func (q *Queries) CreateGamesBulk(ctx context.Context, arg CreateGamesBulkParams
 		arg.Userids,
 	)
 	return err
+}
+
+const createIssue = `-- name: CreateIssue :exec
+INSERT INTO Issues (
+  _id,
+  game_id,
+  MoveIndex,
+  MoveSAN,
+  MoveUCI,
+  Fen,
+  SideToMove,
+  PlayerColor,
+  UserColor,
+  IssueType,
+  PlayedBestMove,
+  BestMove,
+  Ponder,
+  PV,
+  Depth,
+  ScoreCP,
+  Mate,
+  AfterScoreCP,
+  AfterMate,
+  WinProbBefore,
+  WinProbAfter
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+)
+`
+
+type CreateIssueParams struct {
+	ID             pgtype.UUID `json:"_id"`
+	GameID         pgtype.UUID `json:"game_id"`
+	Moveindex      int32       `json:"moveindex"`
+	Movesan        string      `json:"movesan"`
+	Moveuci        string      `json:"moveuci"`
+	Fen            string      `json:"fen"`
+	Sidetomove     string      `json:"sidetomove"`
+	Playercolor    string      `json:"playercolor"`
+	Usercolor      string      `json:"usercolor"`
+	Issuetype      string      `json:"issuetype"`
+	Playedbestmove bool        `json:"playedbestmove"`
+	Bestmove       string      `json:"bestmove"`
+	Ponder         string      `json:"ponder"`
+	Pv             []string    `json:"pv"`
+	Depth          int32       `json:"depth"`
+	Scorecp        int32       `json:"scorecp"`
+	Mate           int32       `json:"mate"`
+	Afterscorecp   int32       `json:"afterscorecp"`
+	Aftermate      int32       `json:"aftermate"`
+	Winprobbefore  float64     `json:"winprobbefore"`
+	Winprobafter   float64     `json:"winprobafter"`
+}
+
+func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) error {
+	_, err := q.db.Exec(ctx, createIssue,
+		arg.ID,
+		arg.GameID,
+		arg.Moveindex,
+		arg.Movesan,
+		arg.Moveuci,
+		arg.Fen,
+		arg.Sidetomove,
+		arg.Playercolor,
+		arg.Usercolor,
+		arg.Issuetype,
+		arg.Playedbestmove,
+		arg.Bestmove,
+		arg.Ponder,
+		arg.Pv,
+		arg.Depth,
+		arg.Scorecp,
+		arg.Mate,
+		arg.Afterscorecp,
+		arg.Aftermate,
+		arg.Winprobbefore,
+		arg.Winprobafter,
+	)
+	return err
+}
+
+const getIssues = `-- name: GetIssues :many
+SELECT _id, game_id, moveindex, movesan, moveuci, fen, sidetomove, playercolor, usercolor, issuetype, playedbestmove, bestmove, ponder, pv, depth, scorecp, mate, afterscorecp, aftermate, winprobbefore, winprobafter FROM issues WHERE game_id=$1
+`
+
+func (q *Queries) GetIssues(ctx context.Context, gameID pgtype.UUID) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, getIssues, gameID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Issue
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(
+			&i.ID,
+			&i.GameID,
+			&i.Moveindex,
+			&i.Movesan,
+			&i.Moveuci,
+			&i.Fen,
+			&i.Sidetomove,
+			&i.Playercolor,
+			&i.Usercolor,
+			&i.Issuetype,
+			&i.Playedbestmove,
+			&i.Bestmove,
+			&i.Ponder,
+			&i.Pv,
+			&i.Depth,
+			&i.Scorecp,
+			&i.Mate,
+			&i.Afterscorecp,
+			&i.Aftermate,
+			&i.Winprobbefore,
+			&i.Winprobafter,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getYourGame = `-- name: GetYourGame :many

@@ -68,6 +68,30 @@ type Game struct {
 	Createdat     pgtype.Date `json:"createdat"`
 }
 
+type Issue struct {
+	ID             pgtype.UUID `json:"_id"`
+	GameID         pgtype.UUID `json:"game_id"`
+	Moveindex      int32       `json:"moveindex"`
+	Movesan        string      `json:"movesan"`
+	Moveuci        string      `json:"moveuci"`
+	Fen            string      `json:"fen"`
+	Sidetomove     string      `json:"sidetomove"`
+	Playercolor    string      `json:"playercolor"`
+	Usercolor      string      `json:"usercolor"`
+	Issuetype      string      `json:"issuetype"`
+	Playedbestmove bool        `json:"playedbestmove"`
+	Bestmove       string      `json:"bestmove"`
+	Ponder         string      `json:"ponder"`
+	Pv             []string    `json:"pv"`
+	Depth          int32       `json:"depth"`
+	Scorecp        int32       `json:"scorecp"`
+	Mate           int32       `json:"mate"`
+	Afterscorecp   int32       `json:"afterscorecp"`
+	Aftermate      int32       `json:"aftermate"`
+	Winprobbefore  float64     `json:"winprobbefore"`
+	Winprobafter   float64     `json:"winprobafter"`
+}
+
 type User struct {
 	ID           int32       `json:"_id"`
 	Fullname     string      `json:"fullname"`

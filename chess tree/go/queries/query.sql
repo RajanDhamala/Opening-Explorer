@@ -30,6 +30,22 @@ WITH payload AS (
     sqlc.arg(results)::text[] AS results,
     sqlc.arg(issuecounts)::int4[] AS issuecounts,
     sqlc.arg(userids)::int4[] AS userids
+),
+rows AS (
+  SELECT
+    ids_row.id,
+    payload.gameurls[ids_row.idx] AS gameurl,
+    payload.whiteusernames[ids_row.idx] AS whiteusername,
+    payload.blackusernames[ids_row.idx] AS blackusername,
+    payload.whiteratings[ids_row.idx] AS whiterating,
+    payload.blackratings[ids_row.idx] AS blackrating,
+    payload.playercolors[ids_row.idx] AS playercolor,
+    payload.timeclasses[ids_row.idx] AS timeclass,
+    payload.results[ids_row.idx] AS result,
+    payload.issuecounts[ids_row.idx] AS issuecount,
+    payload.userids[ids_row.idx] AS user_id
+  FROM payload
+  CROSS JOIN LATERAL unnest(payload.ids) WITH ORDINALITY AS ids_row(id, idx)
 )
 INSERT INTO games (
   _id,
@@ -45,19 +61,18 @@ INSERT INTO games (
   user_id
 )
 SELECT
-  payload.ids[idx],
-  payload.gameurls[idx],
-  payload.whiteusernames[idx],
-  payload.blackusernames[idx],
-  payload.whiteratings[idx],
-  payload.blackratings[idx],
-  payload.playercolors[idx],
-  payload.timeclasses[idx],
-  payload.results[idx],
-  payload.issuecounts[idx],
-  payload.userids[idx]
-FROM payload,
-  generate_subscripts(payload.ids, 1) AS idx
+  rows.id,
+  rows.gameurl,
+  rows.whiteusername,
+  rows.blackusername,
+  rows.whiterating,
+  rows.blackrating,
+  rows.playercolor,
+  rows.timeclass,
+  rows.result,
+  rows.issuecount,
+  rows.user_id
+FROM rows
 ON CONFLICT (_id) DO UPDATE
 SET
   gameurl = EXCLUDED.gameurl,
@@ -73,3 +88,34 @@ SET
 
 -- name: GetYourGame :many
 SELECT * FROM games WHERE user_id=$1;
+
+-- name: CreateIssue :exec
+INSERT INTO Issues (
+  _id,
+  game_id,
+  MoveIndex,
+  MoveSAN,
+  MoveUCI,
+  Fen,
+  SideToMove,
+  PlayerColor,
+  UserColor,
+  IssueType,
+  PlayedBestMove,
+  BestMove,
+  Ponder,
+  PV,
+  Depth,
+  ScoreCP,
+  Mate,
+  AfterScoreCP,
+  AfterMate,
+  WinProbBefore,
+  WinProbAfter
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+);
+
+-- name: GetIssues :many
+SELECT * FROM issues WHERE game_id=$1;
