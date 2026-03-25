@@ -1,5 +1,6 @@
 import axios from "axios";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 type GameResult = "win" | "loss" | "draw" | string;
 
@@ -71,17 +72,25 @@ const ListPage = () => {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => refetch()}
-              disabled={isFetching}
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-950 px-4 text-sm font-medium text-neutral-200 transition hover:bg-neutral-900 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {isFetching ? "Refreshing..." : "Refresh"}
-            </button>
+            <div className="flex gap-2">
+              <Link
+                to="/puzzles"
+                className="inline-flex h-10 items-center justify-center rounded-lg border border-amber-700/50 bg-amber-950/50 px-4 text-sm font-medium text-amber-200 transition hover:bg-amber-900/50"
+              >
+                🧩 Practice Puzzles
+              </Link>
+              <button
+                type="button"
+                onClick={() => refetch()}
+                disabled={isFetching}
+                className="inline-flex h-10 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-950 px-4 text-sm font-medium text-neutral-200 transition hover:bg-neutral-900 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isFetching ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
           </div>
 
-          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-4">
             <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
               <p className="text-xs uppercase tracking-wide text-neutral-500">Total games</p>
               <p className="mt-1 text-2xl font-semibold">{games.length}</p>
@@ -90,10 +99,17 @@ const ListPage = () => {
               <p className="text-xs uppercase tracking-wide text-neutral-500">Total issues</p>
               <p className="mt-1 text-2xl font-semibold">{totalIssues}</p>
             </div>
+            <Link 
+              to="/puzzles"
+              className="rounded-lg border border-amber-800/50 bg-amber-950/30 p-4 transition hover:bg-amber-950/50"
+            >
+              <p className="text-xs uppercase tracking-wide text-amber-500">Puzzles to Practice</p>
+              <p className="mt-1 text-2xl font-semibold text-amber-300">{totalIssues}</p>
+            </Link>
             <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
               <p className="text-xs uppercase tracking-wide text-neutral-500">Endpoint</p>
               <p className="mt-1 truncate text-sm text-neutral-300">
-                http://localhost:3030/games/list
+                /games/list
               </p>
             </div>
           </div>

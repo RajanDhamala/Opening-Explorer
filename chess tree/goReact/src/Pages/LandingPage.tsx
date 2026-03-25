@@ -57,7 +57,7 @@ const LandingPage = () => {
             Docs (soon)
           </button>
           <button className="inline-flex items-center gap-1.5 rounded-full border bg-foreground text-background px-4 py-1.5
-           font-semibold shadow-sm shadow-black/10 transition hover:bg-foreground/90" onClick={(e)=>{
+           font-semibold shadow-sm shadow-black/10 transition hover:bg-foreground/90" onClick={()=>{
         window.open("https://github.com/RajanDhamala/stackforge-cli", "_blank");
            }}>
             <Github className="h-3.5 w-3.5" />
@@ -97,7 +97,7 @@ const LandingPage = () => {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <button className="group inline-flex items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5
              text-sm font-semibold text-background shadow-[0_18px_45px_-18px_rgba(0,0,0,0.7)] transition hover:-translate-y-[1px] hover:bg-foreground/95"
-              onClick={(e)=>{
+              onClick={()=>{
                   window.open("https://www.npmjs.com/package/stack-installer-cli", "_blank");
              }}>
               <Zap className="h-4 w-4" />

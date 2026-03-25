@@ -7,4 +7,5 @@ export const LazyRegisterPage = lazy(() => import("../Auth/Registerpage.tsx"));
 export const LazyTestPage = lazy(() => import("../Pages/Testpage.tsx"));
 export const LazyBoardPage = lazy(() => import("../Pages/Board.tsx"));
 export const LazyListPage = lazy(() => import("../Pages/ListPage.tsx"));
+export const LazyPuzzlesPage = lazy(() => import("../Pages/PuzzlesPage.tsx"));
 

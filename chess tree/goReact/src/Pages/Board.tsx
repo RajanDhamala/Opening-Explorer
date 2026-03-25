@@ -38,11 +38,8 @@ const BoardPage = () => {
     age: Number,
     email: string
   }
-  const name: Player = {
-    name: "John Doe",
-    age: 30,
-    email: "demo@gmail.com"
-  }
+  // Example player for demonstration
+  void ({ name: "John Doe", age: 30, email: "demo@gmail.com" } as Player);
 
   const onDrop = ({
     sourceSquare,

@@ -1,7 +1,7 @@
 
 import { Suspense, useEffect } from "react";
 import "./index.css";
-import { LazyLandingPage, LazyRegisterPage, LazyLoginPage, LazyTestPage, LazyListPage, LazyBoardPage } from "./LazyLoading/LazyLoading";
+import { LazyLandingPage, LazyRegisterPage, LazyLoginPage, LazyTestPage, LazyListPage, LazyBoardPage, LazyPuzzlesPage } from "./LazyLoading/LazyLoading";
 import { BrowserRouter as Router, Routes, Route, } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import queryClient from "./Utils/QueryConfig.tsx";
@@ -50,6 +50,7 @@ function App() {
             <Route path="/register" element={<LazyRegisterPage />} />
             <Route path="/list" element={<LazyListPage />} />
             <Route path="/test" element={<LazyTestPage />} />
+            <Route path="/puzzles" element={<LazyPuzzlesPage />} />
 
             <Route path="/board" element={<LazyBoardPage />} />
 
