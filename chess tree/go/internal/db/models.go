@@ -65,7 +65,7 @@ type Game struct {
 	Result        string      `json:"result"`
 	Issuecount    int32       `json:"issuecount"`
 	UserID        int32       `json:"user_id"`
-	Createdat     pgtype.Date `json:"createdat"`
+	Createdate    pgtype.Date `json:"createdate"`
 }
 
 type Issue struct {

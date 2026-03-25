@@ -119,3 +119,20 @@ INSERT INTO Issues (
 
 -- name: GetIssues :many
 SELECT * FROM issues WHERE game_id=$1;
+
+-- name: GetUserIssues :many
+SELECT i.* FROM issues i
+JOIN games g ON i.game_id = g._id
+WHERE g.user_id = $1
+ORDER BY i.moveindex;
+
+-- name: GetPuzzlesByType :many
+SELECT i.* FROM issues i
+JOIN games g ON i.game_id = g._id
+WHERE g.user_id = $1 AND i.issuetype = $2
+ORDER BY i.moveindex;
+
+-- name: GetPuzzlesCount :one
+SELECT COUNT(*) FROM issues i
+JOIN games g ON i.game_id = g._id
+WHERE g.user_id = $1;

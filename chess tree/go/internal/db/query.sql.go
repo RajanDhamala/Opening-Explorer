@@ -300,8 +300,124 @@ func (q *Queries) GetIssues(ctx context.Context, gameID pgtype.UUID) ([]Issue, e
 	return items, nil
 }
 
+const getPuzzlesByType = `-- name: GetPuzzlesByType :many
+SELECT i._id, i.game_id, i.moveindex, i.movesan, i.moveuci, i.fen, i.sidetomove, i.playercolor, i.usercolor, i.issuetype, i.playedbestmove, i.bestmove, i.ponder, i.pv, i.depth, i.scorecp, i.mate, i.afterscorecp, i.aftermate, i.winprobbefore, i.winprobafter FROM issues i
+JOIN games g ON i.game_id = g._id
+WHERE g.user_id = $1 AND i.issuetype = $2
+ORDER BY i.moveindex
+`
+
+type GetPuzzlesByTypeParams struct {
+	UserID    int32  `json:"user_id"`
+	Issuetype string `json:"issuetype"`
+}
+
+func (q *Queries) GetPuzzlesByType(ctx context.Context, arg GetPuzzlesByTypeParams) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, getPuzzlesByType, arg.UserID, arg.Issuetype)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Issue
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(
+			&i.ID,
+			&i.GameID,
+			&i.Moveindex,
+			&i.Movesan,
+			&i.Moveuci,
+			&i.Fen,
+			&i.Sidetomove,
+			&i.Playercolor,
+			&i.Usercolor,
+			&i.Issuetype,
+			&i.Playedbestmove,
+			&i.Bestmove,
+			&i.Ponder,
+			&i.Pv,
+			&i.Depth,
+			&i.Scorecp,
+			&i.Mate,
+			&i.Afterscorecp,
+			&i.Aftermate,
+			&i.Winprobbefore,
+			&i.Winprobafter,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPuzzlesCount = `-- name: GetPuzzlesCount :one
+SELECT COUNT(*) FROM issues i
+JOIN games g ON i.game_id = g._id
+WHERE g.user_id = $1
+`
+
+func (q *Queries) GetPuzzlesCount(ctx context.Context, userID int32) (int64, error) {
+	row := q.db.QueryRow(ctx, getPuzzlesCount, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const getUserIssues = `-- name: GetUserIssues :many
+SELECT i._id, i.game_id, i.moveindex, i.movesan, i.moveuci, i.fen, i.sidetomove, i.playercolor, i.usercolor, i.issuetype, i.playedbestmove, i.bestmove, i.ponder, i.pv, i.depth, i.scorecp, i.mate, i.afterscorecp, i.aftermate, i.winprobbefore, i.winprobafter FROM issues i
+JOIN games g ON i.game_id = g._id
+WHERE g.user_id = $1
+ORDER BY i.moveindex
+`
+
+func (q *Queries) GetUserIssues(ctx context.Context, userID int32) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, getUserIssues, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Issue
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(
+			&i.ID,
+			&i.GameID,
+			&i.Moveindex,
+			&i.Movesan,
+			&i.Moveuci,
+			&i.Fen,
+			&i.Sidetomove,
+			&i.Playercolor,
+			&i.Usercolor,
+			&i.Issuetype,
+			&i.Playedbestmove,
+			&i.Bestmove,
+			&i.Ponder,
+			&i.Pv,
+			&i.Depth,
+			&i.Scorecp,
+			&i.Mate,
+			&i.Afterscorecp,
+			&i.Aftermate,
+			&i.Winprobbefore,
+			&i.Winprobafter,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getYourGame = `-- name: GetYourGame :many
-SELECT _id, gameurl, whiteusername, blackusername, whiterating, blackrating, playercolor, timeclass, result, issuecount, user_id, createdat FROM games WHERE user_id=$1
+SELECT _id, gameurl, whiteusername, blackusername, whiterating, blackrating, playercolor, timeclass, result, issuecount, user_id, createdate FROM games WHERE user_id=$1
 `
 
 func (q *Queries) GetYourGame(ctx context.Context, userID int32) ([]Game, error) {
@@ -325,7 +441,7 @@ func (q *Queries) GetYourGame(ctx context.Context, userID int32) ([]Game, error)
 			&i.Result,
 			&i.Issuecount,
 			&i.UserID,
-			&i.Createdat,
+			&i.Createdate,
 		); err != nil {
 			return nil, err
 		}

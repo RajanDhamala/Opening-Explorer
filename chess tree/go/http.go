@@ -32,7 +32,7 @@ func main() {
 		fmt.Println("error while starting Stockfish:", errs)
 		return
 	}
-	controller := Controllers.NewController(db.New(dbPool))
+	controller := Controllers.NewController(db.New(dbPool), dbPool)
 
 	app := fiber.New()
 	// opening.Loadtsv()
