@@ -73,9 +73,12 @@ const PuzzlesPage = () => {
   const [engineLines, setEngineLines] = useState<EngineLine[]>([]);
   const [engineDepth, setEngineDepth] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isPlayingLine, setIsPlayingLine] = useState(false);
 
   const stockfishRef = useRef<Worker | null>(null);
   const stockfishReadyRef = useRef(false);
+  const currentFenRef = useRef<string>("");
+  const playLineTimeoutRef = useRef<number | null>(null);
 
   const { data: puzzles = [], isLoading, isError } = useQuery({
     queryKey: ["puzzles", selectedType],
@@ -86,24 +89,44 @@ const PuzzlesPage = () => {
   const currentFen = positionHistory[currentMoveIndex + 1] || puzzle?.fen || "";
   const isFlipped = puzzle?.playercolor === "black";
 
+  // Keep currentFenRef in sync for stockfish closure
   useEffect(() => {
+    currentFenRef.current = currentFen;
+  }, [currentFen]);
+
+  // Cleanup playLine timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (playLineTimeoutRef.current) {
+        clearTimeout(playLineTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    console.log("🔧 Initializing Stockfish worker...");
+    
+    // Load stockfish directly - simpler approach
     const worker = new Worker("/stockfish/stockfish.js");
 
     worker.onmessage = (e: MessageEvent) => {
       const line = e.data;
+      console.log("📨 Stockfish:", line);
 
-      if (line === "uciok") {
+      if (typeof line === "string" && line.includes("uciok")) {
+        console.log("✅ Stockfish UCI OK, configuring...");
         worker.postMessage("setoption name Threads value 1");
-        worker.postMessage("setoption name Hash value 32");
+        worker.postMessage("setoption name Hash value 16");
         worker.postMessage("setoption name MultiPV value 3");
         worker.postMessage("isready");
       }
 
-      if (line === "readyok") {
+      if (typeof line === "string" && line.includes("readyok")) {
+        console.log("✅ Stockfish READY!");
         stockfishReadyRef.current = true;
       }
 
-      // Pae multipv info lines
+      // Parse multipv info lines
       if (typeof line === "string" && line.includes("multipv") && line.includes("score")) {
         const depthMatch = line.match(/depth (\d+)/);
         const pvIdxMatch = line.match(/multipv (\d+)/);
@@ -125,7 +148,7 @@ const PuzzlesPage = () => {
           }
 
           const pvMoves = pvMatch ? pvMatch[1].split(" ").filter(m => m.length >= 4) : [];
-          const pvSan = currentFen ? pvToSan(currentFen, pvMoves) : pvMoves;
+          const pvSan = currentFenRef.current ? pvToSan(currentFenRef.current, pvMoves) : pvMoves;
 
           setEngineDepth(depth);
           setEngineLines(prev => {
@@ -136,34 +159,67 @@ const PuzzlesPage = () => {
         }
       }
 
-      if (typeof line === "string" && line.startsWith("bestmove")) {
+      if (typeof line === "string" && line.includes("bestmove")) {
+        console.log("✅ Stockfish analysis complete");
         setIsAnalyzing(false);
       }
     };
 
+    worker.onerror = (e) => {
+      console.error("❌ Stockfish worker error:", e);
+      setIsAnalyzing(false);
+    };
+
+    console.log("📤 Sending 'uci' command...");
     worker.postMessage("uci");
     stockfishRef.current = worker;
 
     return () => {
+      console.log("🛑 Terminating Stockfish worker");
       worker.postMessage("quit");
       worker.terminate();
     };
   }, []);
 
-  const analyzePosition = useCallback((fen: string) => {
-    if (!stockfishRef.current || !stockfishReadyRef.current || !showEngine) return;
+  const analyzePosition = useCallback((fen: string, force = false) => {
+    console.log("🔍 analyzePosition called:", { fen, force, showEngine, ready: stockfishReadyRef.current, worker: !!stockfishRef.current });
+    
+    if (!stockfishRef.current) {
+      console.error("❌ No stockfish worker!");
+      return;
+    }
+    
+    // When force=true (user clicked analyze), skip ready check - send command anyway
+    if (!force) {
+      if (!stockfishReadyRef.current) {
+        console.log("⏳ Stockfish not ready yet, skipping auto-analyze");
+        return;
+      }
+      if (!showEngine) {
+        console.log("⏭️ Engine not enabled, skipping");
+        return;
+      }
+    }
 
+    console.log("📤 Starting analysis...");
     stockfishRef.current.postMessage("stop");
     setEngineLines([]);
     setEngineDepth(0);
     setIsAnalyzing(true);
 
     stockfishRef.current.postMessage(`position fen ${fen}`);
-    stockfishRef.current.postMessage("go depth 22");
+    stockfishRef.current.postMessage("go depth 20");
   }, [showEngine]);
 
   useEffect(() => {
     if (puzzle) {
+      // Cancel any ongoing line playback
+      if (playLineTimeoutRef.current) {
+        clearTimeout(playLineTimeoutRef.current);
+        playLineTimeoutRef.current = null;
+      }
+      setIsPlayingLine(false);
+      
       setPositionHistory([puzzle.fen]);
       setMoveHistory([]);
       setCurrentMoveIndex(-1);
@@ -263,8 +319,43 @@ const PuzzlesPage = () => {
     setArrows([{ from, to, color: colors.arrowGreen }]);
   }, [puzzle, status]);
 
+  // Animated line playback with 400ms delay between moves
+  const playLineWithDelay = useCallback((
+    fens: string[],
+    moves: string[],
+    onComplete?: () => void
+  ) => {
+    if (fens.length === 0) return;
+
+    // Clear any existing timeout
+    if (playLineTimeoutRef.current) {
+      clearTimeout(playLineTimeoutRef.current);
+    }
+
+    setIsPlayingLine(true);
+    setPositionHistory(fens);
+    setMoveHistory(moves);
+    setCurrentMoveIndex(-1); // Start from initial position
+    setArrows([]);
+
+    let currentIdx = 0;
+    const playNextMove = () => {
+      if (currentIdx < moves.length) {
+        setCurrentMoveIndex(currentIdx);
+        currentIdx++;
+        playLineTimeoutRef.current = window.setTimeout(playNextMove, 400);
+      } else {
+        setIsPlayingLine(false);
+        onComplete?.();
+      }
+    };
+
+    // Start playing after a short initial delay
+    playLineTimeoutRef.current = window.setTimeout(playNextMove, 400);
+  }, []);
+
   const handleViewSolution = useCallback(() => {
-    if (!puzzle) return;
+    if (!puzzle || isPlayingLine) return;
 
     try {
       const game = new Chess(puzzle.fen);
@@ -284,23 +375,27 @@ const PuzzlesPage = () => {
         } else break;
       }
 
-      setPositionHistory(fens);
-      setMoveHistory(moves);
-      setCurrentMoveIndex(moves.length - 1);
       setStatus("solution");
-      setArrows([]);
 
       if (status === "playing") {
         setAttempts(prev => [...prev, { puzzleId: puzzle._id, result: "skipped" }]);
       }
+
+      // Play the line with animated delay
+      playLineWithDelay(fens, moves);
     } catch {
       // Ignore
     }
-  }, [puzzle, status]);
+  }, [puzzle, status, isPlayingLine, playLineWithDelay]);
 
   const handlePieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null }): boolean => {
-    if (!puzzle || !targetSquare || status === "solution") return false;
-    if (currentMoveIndex !== moveHistory.length - 1 && moveHistory.length > 0) return false;
+    if (!puzzle || !targetSquare || isPlayingLine) return false;
+    
+    // In analysis/solution mode, allow moves from both sides
+    const isAnalysisMode = status === "solution" || status === "correct" || status === "wrong";
+    
+    // Only restrict navigation in playing mode
+    if (!isAnalysisMode && currentMoveIndex !== moveHistory.length - 1 && moveHistory.length > 0) return false;
 
     try {
       const game = new Chess(currentFen);
@@ -345,7 +440,7 @@ const PuzzlesPage = () => {
     } catch {
       return false;
     }
-  }, [puzzle, status, currentFen, currentMoveIndex, moveHistory.length, autoAdvance, goToNextPuzzle]);
+  }, [puzzle, status, currentFen, currentMoveIndex, moveHistory.length, autoAdvance, goToNextPuzzle, isPlayingLine]);
 
   const handleRetry = useCallback(() => {
     if (!puzzle) return;
@@ -562,10 +657,11 @@ const PuzzlesPage = () => {
                     status === "solution" ? "text-[#8b8987]" :
                       "text-white"
                 }`}>
-                {status === "playing" && `${puzzle?.sidetomove === "w" ? "White" : "Black"} to play`}
-                {status === "correct" && "✓ Correct!"}
-                {status === "wrong" && `✗ Best was ${bestMoveSan}`}
-                {status === "solution" && "Solution shown"}
+                {isPlayingLine && <span className="animate-pulse">▶ Playing line...</span>}
+                {!isPlayingLine && status === "playing" && `${puzzle?.sidetomove === "w" ? "White" : "Black"} to play`}
+                {!isPlayingLine && status === "correct" && "✓ Correct!"}
+                {!isPlayingLine && status === "wrong" && `✗ Best was ${bestMoveSan}`}
+                {!isPlayingLine && status === "solution" && "Solution shown"}
               </div>
             </div>
 
@@ -622,14 +718,23 @@ const PuzzlesPage = () => {
               depth={engineDepth}
               enabled={showEngine}
               onToggle={() => setShowEngine(!showEngine)}
+              onAnalyze={() => {
+                console.log("🖱️ Analyze button clicked!", { currentFen });
+                if (currentFen) {
+                  analyzePosition(currentFen, true);
+                } else {
+                  console.error("❌ No FEN to analyze!");
+                }
+              }}
               onLineClick={(idx) => {
-                // Play engine line moves on the board
+                // Play engine line moves on the board with animation
+                if (isPlayingLine) return;
                 const line = engineLines[idx];
                 if (!line || !puzzle) return;
 
                 try {
-                  const game = new Chess(puzzle.fen);
-                  const fens = [puzzle.fen];
+                  const game = new Chess(currentFen);
+                  const fens = [currentFen];
                   const moves: string[] = [];
 
                   for (const uci of line.pv) {
@@ -644,9 +749,8 @@ const PuzzlesPage = () => {
                     } else break;
                   }
 
-                  setPositionHistory(fens);
-                  setMoveHistory(moves);
-                  setCurrentMoveIndex(moves.length - 1);
+                  // Play with animated delay
+                  playLineWithDelay(fens, moves);
                 } catch {
                   // Ignore
                 }

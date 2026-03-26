@@ -6,6 +6,7 @@ interface EngineLinesProps {
   isAnalyzing: boolean;
   depth: number;
   onLineClick?: (lineIdx: number) => void;
+  onAnalyze?: () => void;
   enabled: boolean;
   onToggle: () => void;
 }
@@ -20,7 +21,7 @@ function LineSkeleton() {
   );
 }
 
-export function EngineLines({ lines, isAnalyzing, depth, onLineClick, enabled, onToggle }: EngineLinesProps) {
+export function EngineLines({ lines, isAnalyzing, depth, onLineClick, onAnalyze, enabled, onToggle }: EngineLinesProps) {
   if (!enabled) {
     return (
       <div className="border-t border-[#3a3836]">
@@ -37,6 +38,9 @@ export function EngineLines({ lines, isAnalyzing, depth, onLineClick, enabled, o
     );
   }
 
+  // Show skeleton if analyzing and no lines yet, OR if lines array has gaps
+  const showSkeleton = isAnalyzing && lines.length < 3;
+
   return (
     <div className="border-t border-[#3a3836]">
       {/* Header */}
@@ -46,11 +50,15 @@ export function EngineLines({ lines, isAnalyzing, depth, onLineClick, enabled, o
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
           <span className="text-xs text-[#8b8987]">Stockfish 16</span>
-          {isAnalyzing && (
+          {isAnalyzing ? (
             <span className="text-xs text-[#629924] animate-pulse">
+              {depth > 0 ? `depth ${depth}` : "starting..."}
+            </span>
+          ) : depth > 0 ? (
+            <span className="text-xs text-[#6e6c6a]">
               depth {depth}
             </span>
-          )}
+          ) : null}
         </div>
         <button
           onClick={onToggle}
@@ -69,27 +77,42 @@ export function EngineLines({ lines, isAnalyzing, depth, onLineClick, enabled, o
             <LineSkeleton />
           </>
         ) : (
-          lines.map((line, idx) => (
-            <button
-              key={idx}
-              onClick={() => onLineClick?.(idx)}
-              className="w-full flex items-start gap-2 py-1 px-1 rounded hover:bg-[#302e2c] transition text-left group"
-            >
-              <span
-                className={`text-xs font-mono font-semibold min-w-[48px] ${
-                  (line.score !== null && line.score > 0) || (line.mate !== null && line.mate > 0)
-                    ? "text-[#bababa]"
-                    : "text-[#8b8987]"
-                }`}
+          <>
+            {lines.map((line, idx) => (
+              <button
+                key={idx}
+                onClick={() => onLineClick?.(idx)}
+                className="w-full flex items-start gap-2 py-1 px-1 rounded hover:bg-[#302e2c] transition text-left group"
               >
-                {formatScore(line.score, line.mate)}
-              </span>
-              <span className="text-xs text-[#bababa] font-mono truncate flex-1 group-hover:text-white">
-                {line.pvSan.slice(0, 8).join(" ")}
-                {line.pvSan.length > 8 && "..."}
-              </span>
-            </button>
-          ))
+                <span
+                  className={`text-xs font-mono font-semibold min-w-[48px] ${
+                    (line.score !== null && line.score > 0) || (line.mate !== null && line.mate > 0)
+                      ? "text-[#bababa]"
+                      : "text-[#8b8987]"
+                  }`}
+                >
+                  {formatScore(line.score, line.mate)}
+                </span>
+                <span className="text-xs text-[#bababa] font-mono truncate flex-1 group-hover:text-white">
+                  {line.pvSan.slice(0, 8).join(" ")}
+                  {line.pvSan.length > 8 && "..."}
+                </span>
+              </button>
+            ))}
+            {/* Show remaining skeletons while loading more lines */}
+            {showSkeleton && Array.from({ length: 3 - lines.length }).map((_, i) => (
+              <LineSkeleton key={`skeleton-${i}`} />
+            ))}
+          </>
+        )}
+        {/* Clickable button to start analysis when idle */}
+        {!isAnalyzing && lines.length === 0 && (
+          <button
+            onClick={onAnalyze}
+            className="w-full text-xs text-[#629924] hover:text-[#7ab82f] py-2 text-center transition hover:bg-[#302e2c] rounded"
+          >
+            ▶ Click to analyze position
+          </button>
         )}
       </div>
     </div>
