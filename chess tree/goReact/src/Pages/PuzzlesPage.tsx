@@ -103,20 +103,26 @@ const PuzzlesPage = () => {
     };
   }, []);
 
+  // Track pending analysis request
+  const pendingFenRef = useRef<string | null>(null);
+  const waitingForReadyRef = useRef(false);
+
   useEffect(() => {
-    console.log("🔧 Initializing Stockfish worker...");
+    console.log("🔧 Initializing Stockfish 17.1 Lite worker...");
     
-    // Load stockfish directly - simpler approach
-    const worker = new Worker("/stockfish/stockfish.js");
+    // Use Stockfish 17.1 NNUE Lite single-thread (simplest, single wasm file, works everywhere)
+    const worker = new Worker("/stockfish/stockfish-17.1-lite-single-03e3232.js");
 
     worker.onmessage = (e: MessageEvent) => {
       const line = e.data;
-      console.log("📨 Stockfish:", line);
+      // Only log non-spammy messages
+      if (typeof line === "string" && !line.startsWith("info depth")) {
+        console.log("📨 Stockfish:", line);
+      }
 
       if (typeof line === "string" && line.includes("uciok")) {
         console.log("✅ Stockfish UCI OK, configuring...");
-        worker.postMessage("setoption name Threads value 1");
-        worker.postMessage("setoption name Hash value 16");
+        worker.postMessage("setoption name Hash value 32");
         worker.postMessage("setoption name MultiPV value 3");
         worker.postMessage("isready");
       }
@@ -124,6 +130,15 @@ const PuzzlesPage = () => {
       if (typeof line === "string" && line.includes("readyok")) {
         console.log("✅ Stockfish READY!");
         stockfishReadyRef.current = true;
+        
+        // If we have a pending analysis, start it now
+        if (waitingForReadyRef.current && pendingFenRef.current) {
+          console.log("📤 Starting pending analysis for:", pendingFenRef.current);
+          worker.postMessage(`position fen ${pendingFenRef.current}`);
+          worker.postMessage("go depth 22");
+          pendingFenRef.current = null;
+          waitingForReadyRef.current = false;
+        }
       }
 
       // Parse multipv info lines
@@ -168,6 +183,8 @@ const PuzzlesPage = () => {
     worker.onerror = (e) => {
       console.error("❌ Stockfish worker error:", e);
       setIsAnalyzing(false);
+      waitingForReadyRef.current = false;
+      pendingFenRef.current = null;
     };
 
     console.log("📤 Sending 'uci' command...");
@@ -201,14 +218,21 @@ const PuzzlesPage = () => {
       }
     }
 
-    console.log("📤 Starting analysis...");
+    console.log("📤 Stopping current analysis and starting new...");
+    
+    // Stop current analysis
     stockfishRef.current.postMessage("stop");
+    
+    // Clear old lines
     setEngineLines([]);
     setEngineDepth(0);
     setIsAnalyzing(true);
 
-    stockfishRef.current.postMessage(`position fen ${fen}`);
-    stockfishRef.current.postMessage("go depth 20");
+    // Send ucinewgame to reset engine state, then wait for readyok
+    stockfishRef.current.postMessage("ucinewgame");
+    pendingFenRef.current = fen;
+    waitingForReadyRef.current = true;
+    stockfishRef.current.postMessage("isready");
   }, [showEngine]);
 
   useEffect(() => {
@@ -727,32 +751,29 @@ const PuzzlesPage = () => {
                 }
               }}
               onLineClick={(idx) => {
-                // Play engine line moves on the board with animation
+                // Play just the first move of the engine line
                 if (isPlayingLine) return;
                 const line = engineLines[idx];
-                if (!line || !puzzle) return;
+                if (!line || !puzzle || !line.pv.length) return;
 
                 try {
                   const game = new Chess(currentFen);
-                  const fens = [currentFen];
-                  const moves: string[] = [];
-
-                  for (const uci of line.pv) {
-                    const move = game.move({
-                      from: uci.slice(0, 2) as Square,
-                      to: uci.slice(2, 4) as Square,
-                      promotion: uci.length > 4 ? uci[4] : undefined,
-                    });
-                    if (move) {
-                      moves.push(move.san);
-                      fens.push(game.fen());
-                    } else break;
+                  const uci = line.pv[0]; // Only first move
+                  const move = game.move({
+                    from: uci.slice(0, 2) as Square,
+                    to: uci.slice(2, 4) as Square,
+                    promotion: uci.length > 4 ? uci[4] : undefined,
+                  });
+                  
+                  if (move) {
+                    // Update position with just the first move
+                    const newFen = game.fen();
+                    setPositionHistory(prev => [...prev.slice(0, currentMoveIndex + 2), newFen]);
+                    setMoveHistory(prev => [...prev.slice(0, currentMoveIndex + 1), move.san]);
+                    setCurrentMoveIndex(prev => prev + 1);
                   }
-
-                  // Play with animated delay
-                  playLineWithDelay(fens, moves);
                 } catch {
-                  // Ignore
+                  // Ignore invalid moves
                 }
               }}
             />

@@ -17,6 +17,11 @@ export default defineConfig(({ command }) => {
       ? {
           //host: true,
           port: 5173,
+          headers: {
+            // Required for SharedArrayBuffer (multi-threaded Stockfish)
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+          },
           proxy: {
             "/api": {
               target: "http://localhost:8000", // dev backend container
