@@ -45,6 +45,7 @@ const ISSUE_TYPES = [
   { value: "mistake", label: "Mistakes" },
   { value: "inaccuracy", label: "Inaccuracies" },
 ];
+const MIN_EVAL_UPDATE_DEPTH = 12;
 
 const fetchPuzzles = async (type: string): Promise<Puzzle[]> => {
   const url = type === "all"
@@ -72,12 +73,14 @@ const PuzzlesPage = () => {
 
   const [engineLines, setEngineLines] = useState<EngineLine[]>([]);
   const [engineDepth, setEngineDepth] = useState(0);
+  const [stableEngineEval, setStableEngineEval] = useState<{ score: number | null; mate: number | null } | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isPlayingLine, setIsPlayingLine] = useState(false);
 
   const stockfishRef = useRef<Worker | null>(null);
   const stockfishReadyRef = useRef(false);
   const currentFenRef = useRef<string>("");
+  const activeAnalysisFenRef = useRef<string>("");
   const playLineTimeoutRef = useRef<number | null>(null);
 
   const { data: puzzles = [], isLoading, isError } = useQuery({
@@ -133,8 +136,10 @@ const PuzzlesPage = () => {
         
         // If we have a pending analysis, start it now
         if (waitingForReadyRef.current && pendingFenRef.current) {
-          console.log("📤 Starting pending analysis for:", pendingFenRef.current);
-          worker.postMessage(`position fen ${pendingFenRef.current}`);
+          const fenToAnalyze = pendingFenRef.current;
+          activeAnalysisFenRef.current = fenToAnalyze;
+          console.log("📤 Starting pending analysis for:", fenToAnalyze);
+          worker.postMessage(`position fen ${fenToAnalyze}`);
           worker.postMessage("go depth 22");
           pendingFenRef.current = null;
           waitingForReadyRef.current = false;
@@ -143,6 +148,9 @@ const PuzzlesPage = () => {
 
       // Parse multipv info lines
       if (typeof line === "string" && line.includes("multipv") && line.includes("score")) {
+        if (waitingForReadyRef.current) {
+          return;
+        }
         const depthMatch = line.match(/depth (\d+)/);
         const pvIdxMatch = line.match(/multipv (\d+)/);
         const scoreMatch = line.match(/score (cp|mate) (-?\d+)/);
@@ -162,6 +170,17 @@ const PuzzlesPage = () => {
             }
           }
 
+          const analysisFen = activeAnalysisFenRef.current || currentFenRef.current;
+          const analyzedTurn = analysisFen.split(" ")[1] === "b" ? "b" : "w";
+          const turnMultiplier = analyzedTurn === "w" ? 1 : -1;
+
+          if (score !== null) {
+            score = score * turnMultiplier;
+          }
+          if (mate !== null) {
+            mate = mate * turnMultiplier;
+          }
+
           const pvMoves = pvMatch ? pvMatch[1].split(" ").filter(m => m.length >= 4) : [];
           const pvSan = currentFenRef.current ? pvToSan(currentFenRef.current, pvMoves) : pvMoves;
 
@@ -171,12 +190,18 @@ const PuzzlesPage = () => {
             updated[pvIdx] = { pvIdx, depth, score, mate, pv: pvMoves, pvSan };
             return updated.slice(0, 3);
           });
+
+          if (pvIdx === 0 && depth >= MIN_EVAL_UPDATE_DEPTH) {
+            setStableEngineEval({ score, mate });
+          }
         }
       }
 
       if (typeof line === "string" && line.includes("bestmove")) {
-        console.log("✅ Stockfish analysis complete");
-        setIsAnalyzing(false);
+        if (!waitingForReadyRef.current) {
+          console.log("✅ Stockfish analysis complete");
+          setIsAnalyzing(false);
+        }
       }
     };
 
@@ -226,10 +251,12 @@ const PuzzlesPage = () => {
     // Clear old lines
     setEngineLines([]);
     setEngineDepth(0);
+    setStableEngineEval(null);
     setIsAnalyzing(true);
 
     // Send ucinewgame to reset engine state, then wait for readyok
     stockfishRef.current.postMessage("ucinewgame");
+    activeAnalysisFenRef.current = fen;
     pendingFenRef.current = fen;
     waitingForReadyRef.current = true;
     stockfishRef.current.postMessage("isready");
@@ -250,6 +277,8 @@ const PuzzlesPage = () => {
       setStatus("playing");
       setArrows([]);
       setEngineLines([]);
+      setEngineDepth(0);
+      setStableEngineEval(null);
 
       if (showEngine) {
         analyzePosition(puzzle.fen);
@@ -481,14 +510,14 @@ const PuzzlesPage = () => {
   }, [puzzle]);
 
   const currentEval = useMemo(() => {
-    if (engineLines.length > 0 && engineLines[0]) {
-      return { score: engineLines[0].score, mate: engineLines[0].mate };
+    if (stableEngineEval) {
+      return stableEngineEval;
     }
     if (puzzle) {
       return { score: puzzle.scorecp, mate: puzzle.mate !== 0 ? puzzle.mate : null };
     }
     return { score: 0, mate: null };
-  }, [engineLines, puzzle]);
+  }, [stableEngineEval, puzzle]);
 
   const formattedArrows = useMemo(() => {
     return arrows.map(a => ({ startSquare: a.from, endSquare: a.to, color: a.color }));

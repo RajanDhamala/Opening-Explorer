@@ -1,16 +1,17 @@
 package Controllers
 
 import (
-	// "database/sql"
 	"fmt"
 	"strconv"
 
+	"chess/Database"
 	"chess/ProcessPipline"
-	// "chess/Types"
+	"chess/Types"
 	"chess/Utils"
 	"chess/internal/db"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -123,14 +124,52 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 		}
 	}
 
+	// Bulk insert issues using pgx CopyFrom
+	issueInsertCount := int64(0)
+	issueFailedCount := 0
+	if totalIssues > 0 {
+		issueRows := make([]types.IssueRow, 0, totalIssues)
+		for _, gameResult := range gameResults {
+			if len(gameResult.Issues) == 0 {
+				continue
+			}
+			var gameUUID [16]byte
+			parsed, err := uuid.Parse(gameResult.GameID)
+			if err != nil {
+				fmt.Println("failed to parse game UUID for issues:", err)
+				issueFailedCount += len(gameResult.Issues)
+				continue
+			}
+			gameUUID = parsed
+
+			for _, issue := range gameResult.Issues {
+				issueUUID := uuid.New()
+				row := types.MoveIssueToRow(issue, issueUUID, gameUUID)
+				issueRows = append(issueRows, row)
+			}
+		}
+
+		if len(issueRows) > 0 {
+			inserted, err := Database.BulkInsertIssues(c.Context(), ctrl.pool, issueRows)
+			if err != nil {
+				fmt.Println("failed to bulk insert issues:", err)
+				issueFailedCount += len(issueRows)
+			} else {
+				issueInsertCount = inserted
+			}
+		}
+	}
+
 	return c.Status(200).JSON(fiber.Map{
-		"message":          "we evaluated all fetched games",
-		"data":             gameResults,
-		"total":            totalIssues,
-		"processed_games":  len(gameResults),
-		"games_with_issue": gamesWithIssues,
-		"dbfailed":         failedCount,
-		"dbsuccess":        successCount,
+		"message":           "we evaluated all fetched games",
+		"data":              gameResults,
+		"total":             totalIssues,
+		"processed_games":   len(gameResults),
+		"games_with_issue":  gamesWithIssues,
+		"dbfailed":          failedCount,
+		"dbsuccess":         successCount,
+		"issues_inserted":   issueInsertCount,
+		"issues_failed":     issueFailedCount,
 	})
 }
 
@@ -156,5 +195,112 @@ func (ctrl *Controller) GetProcessedGames(c *fiber.Ctx) error {
 	return c.Status(200).JSON(fiber.Map{
 		"message": "fetched game data successfully",
 		"data":    game,
+	})
+}
+
+// GetGameIssues returns all issues/puzzles for a specific game
+func (ctrl *Controller) GetGameIssues(c *fiber.Ctx) error {
+	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
+	if !ok || userClaims == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+
+	gameIDStr := c.Params("game_id")
+	if gameIDStr == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "game_id is required",
+		})
+	}
+
+	var gameID pgtype.UUID
+	if err := gameID.Scan(gameIDStr); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid game_id format",
+		})
+	}
+
+	issues, err := ctrl.queries.GetIssues(c.Context(), gameID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to fetch issues",
+		})
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"message": "issues fetched successfully",
+		"game_id": gameIDStr,
+		"count":   len(issues),
+		"issues":  issues,
+	})
+}
+
+// GetUserPuzzles returns all puzzles/issues for the authenticated user
+func (ctrl *Controller) GetUserPuzzles(c *fiber.Ctx) error {
+	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
+	if !ok || userClaims == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+	id, err := strconv.Atoi(userClaims.ID)
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid user id in token",
+		})
+	}
+
+	issues, err := ctrl.queries.GetUserIssues(c.Context(), int32(id))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to fetch puzzles",
+		})
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"message": "puzzles fetched successfully",
+		"total":   len(issues),
+		"puzzles": issues,
+	})
+}
+
+// GetPuzzlesByType returns puzzles filtered by issue type (blunder, mistake, etc.)
+func (ctrl *Controller) GetPuzzlesByType(c *fiber.Ctx) error {
+	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
+	if !ok || userClaims == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+	id, err := strconv.Atoi(userClaims.ID)
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid user id in token",
+		})
+	}
+
+	issueType := c.Params("type")
+	if issueType == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "issue type is required",
+		})
+	}
+
+	issues, err := ctrl.queries.GetPuzzlesByType(c.Context(), db.GetPuzzlesByTypeParams{
+		UserID:    int32(id),
+		Issuetype: issueType,
+	})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to fetch puzzles",
+		})
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"message":    "puzzles fetched successfully",
+		"issue_type": issueType,
+		"total":      len(issues),
+		"puzzles":    issues,
 	})
 }

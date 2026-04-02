@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,8 +37,26 @@ const (
 	defaultSkipInitialPlies    = 10
 	defaultMaxUserMovesPerGame = 40
 	defaultGameWorkers         = 8
-	defaultEvalMoveTime        = 250 * time.Millisecond
+	defaultEvalMoveTime        = 500 * time.Millisecond
 	defaultEvalConcurrency     = 8
+	defaultEvalMultiPV         = 3
+
+	puzzleMinCPLoss   = 150
+	puzzleMajorCPLoss = 300
+
+	puzzleMinWinProbDrop     = 0.12
+	puzzleBlunderWinProbDrop = 0.25
+	puzzleAmbiguousGapWP     = 0.14
+
+	puzzleConversionBeforeWP  = 0.85
+	puzzleConversionAfterWP   = 0.65
+	puzzleConversionMinDrop   = 0.35
+	puzzleConversionMinCPLoss = 300
+
+	puzzleMissedOpportunityBeforeWP  = 0.88
+	puzzleMissedOpportunityAfterWP   = 0.60
+	puzzleMissedOpportunityMinDrop   = 0.18
+	puzzleMissedOpportunityMinCPLoss = 250
 )
 
 var (
@@ -193,6 +212,9 @@ func evaluateWindows(client *stockfish.Client, windows []evaluationWindow, userI
 		beforeWP := getWinProb(beforeEval.ScoreCP, beforeEval.Mate, moveIsWhite)
 		afterWP := getWinProb(afterEval.ScoreCP, afterEval.Mate, moveIsWhite)
 		playedBestMove := sameUCIMove(window.Snapshot.MoveUCI, beforeEval.BestMove)
+		if playedBestMove || isNearEquivalentMove(window.Snapshot.MoveUCI, &beforeEval, moveIsWhite) {
+			continue
+		}
 
 		issueType := classifyIssue(beforeWP, afterWP, &beforeEval, &afterEval, moveIsWhite, playedBestMove)
 		if issueType == "" {
@@ -234,7 +256,7 @@ func evaluatePositionCached(client *stockfish.Client, position string) types.Eva
 	result, err := client.Evaluate(context.Background(), stockfish.EvalRequest{
 		FEN:      position,
 		MoveTime: defaultEvalMoveTime,
-		MultiPV:  1,
+		MultiPV:  defaultEvalMultiPV,
 	})
 	<-evalSem
 
@@ -244,6 +266,7 @@ func evaluatePositionCached(client *stockfish.Client, position string) types.Eva
 	}
 
 	normalizedScoreCP, normalizedMate := normalizeToWhitePerspective(position, result.ScoreCP, result.Mate)
+	normalizedLines := normalizeEvalLinesToWhitePerspective(position, result.Lines)
 
 	normalized := types.EvalResult{
 		Ponder:   normalizeUCIMove(result.Ponder),
@@ -252,6 +275,7 @@ func evaluatePositionCached(client *stockfish.Client, position string) types.Eva
 		Depth:    result.Depth,
 		Mate:     normalizedMate,
 		ScoreCP:  normalizedScoreCP,
+		Lines:    normalizedLines,
 	}
 
 	evalCache.Store(position, cloneEvalResult(normalized))
@@ -264,6 +288,7 @@ func cloneEvalResult(input types.EvalResult) types.EvalResult {
 		BestMove: input.BestMove,
 		PV:       append([]string(nil), input.PV...),
 		Depth:    input.Depth,
+		Lines:    cloneEvalLines(input.Lines),
 	}
 	if input.ScoreCP != nil {
 		cp := *input.ScoreCP
@@ -274,6 +299,119 @@ func cloneEvalResult(input types.EvalResult) types.EvalResult {
 		clone.Mate = &mate
 	}
 	return clone
+}
+
+func cloneEvalLines(lines []types.EvalLine) []types.EvalLine {
+	if len(lines) == 0 {
+		return nil
+	}
+	out := make([]types.EvalLine, 0, len(lines))
+	for _, line := range lines {
+		clonedLine := types.EvalLine{
+			MultiPV: line.MultiPV,
+			PV:      append([]string(nil), line.PV...),
+			Depth:   line.Depth,
+		}
+		if line.ScoreCP != nil {
+			cp := *line.ScoreCP
+			clonedLine.ScoreCP = &cp
+		}
+		if line.Mate != nil {
+			mate := *line.Mate
+			clonedLine.Mate = &mate
+		}
+		out = append(out, clonedLine)
+	}
+	return out
+}
+
+func isNearEquivalentMove(playedMove string, eval *types.EvalResult, moverIsWhite bool) bool {
+	played := normalizeUCIMove(playedMove)
+	if played == "" || eval == nil {
+		return false
+	}
+	if sameUCIMove(played, eval.BestMove) {
+		return true
+	}
+	if len(eval.Lines) == 0 {
+		return false
+	}
+
+	bestLine := eval.Lines[0]
+	if len(bestLine.PV) == 0 {
+		return false
+	}
+	bestMove := normalizeUCIMove(bestLine.PV[0])
+	if bestMove == "" {
+		bestMove = normalizeUCIMove(eval.BestMove)
+	}
+	bestWP := getWinProb(bestLine.ScoreCP, bestLine.Mate, moverIsWhite)
+
+	for _, line := range eval.Lines {
+		if len(line.PV) == 0 {
+			continue
+		}
+		candidateMove := normalizeUCIMove(line.PV[0])
+		if candidateMove == "" || candidateMove != played {
+			continue
+		}
+		if bestMove != "" && candidateMove == bestMove {
+			return true
+		}
+		candidateWP := getWinProb(line.ScoreCP, line.Mate, moverIsWhite)
+		if bestWP-candidateWP <= puzzleAmbiguousGapWP {
+			return true
+		}
+	}
+
+	return false
+}
+
+func normalizeEvalLinesToWhitePerspective(fen string, lines []stockfish.EvalLine) []types.EvalLine {
+	if len(lines) == 0 {
+		return nil
+	}
+	parts := strings.Fields(fen)
+	flipScore := len(parts) >= 2 && parts[1] == "b"
+
+	normalized := make([]types.EvalLine, 0, len(lines))
+	for _, line := range lines {
+		normalizedLine := types.EvalLine{
+			MultiPV: line.MultiPV,
+			PV:      append([]string(nil), line.PV...),
+			Depth:   line.Depth,
+		}
+
+		if line.ScoreCP != nil {
+			cp := *line.ScoreCP
+			if flipScore {
+				cp = -cp
+			}
+			normalizedLine.ScoreCP = &cp
+		}
+		if line.Mate != nil {
+			mate := *line.Mate
+			if flipScore {
+				mate = -mate
+			}
+			normalizedLine.Mate = &mate
+		}
+
+		normalized = append(normalized, normalizedLine)
+	}
+
+	sort.SliceStable(normalized, func(i int, j int) bool {
+		left := normalized[i].MultiPV
+		if left <= 0 {
+			left = i + 1
+		}
+		right := normalized[j].MultiPV
+		if right <= 0 {
+			right = j + 1
+		}
+		return left < right
+	})
+	return normalized
 }
 
 func gameIDForLog(id string) string {
@@ -313,6 +451,9 @@ func DiffEval(snapshots []moveSnapshot, evals []types.EvalResult, userIsWhite bo
 		beforeWP := getWinProb(beforeEval.ScoreCP, beforeEval.Mate, moveIsWhite)
 		afterWP := getWinProb(afterEval.ScoreCP, afterEval.Mate, moveIsWhite)
 		playedBestMove := sameUCIMove(snapshot.MoveUCI, beforeEval.BestMove)
+		if playedBestMove || isNearEquivalentMove(snapshot.MoveUCI, &beforeEval, moveIsWhite) {
+			continue
+		}
 
 		issueType := classifyIssue(beforeWP, afterWP, &beforeEval, &afterEval, moveIsWhite, playedBestMove)
 		if issueType == "" {
@@ -353,11 +494,17 @@ func classifyIssue(prevWP float64, curWP float64, prevEval *types.EvalResult, cu
 		if !afterMateState.ForcingMate || afterMateState.Distance > beforeMateState.Distance+2 {
 			return types.MoveIssueForcedMateMissed
 		}
-		return types.MoveIssueForcedMate
+		return ""
 	}
 
 	if beforeMateState.BeingMated {
-		return types.MoveIssueBeingMated
+		if !afterMateState.BeingMated {
+			return ""
+		}
+		if afterMateState.Distance <= beforeMateState.Distance {
+			return types.MoveIssueBeingMated
+		}
+		return ""
 	}
 
 	if playedBestMove {
@@ -366,13 +513,10 @@ func classifyIssue(prevWP float64, curWP float64, prevEval *types.EvalResult, cu
 
 	moveQuality := classifyMoveQuality(prevWP, curWP, prevEval, curEval, moveIsWhite)
 	if moveQuality != "" {
-		if moveQuality == types.MoveIssueInaccuracy && isMissedOpportunity(prevWP, curWP) {
-			return types.MoveIssueMissedOpportunity
-		}
 		return moveQuality
 	}
 
-	if isMissedOpportunity(prevWP, curWP) {
+	if isMissedOpportunity(prevWP, curWP, prevEval, curEval, moveIsWhite) {
 		return types.MoveIssueMissedOpportunity
 	}
 
@@ -387,78 +531,53 @@ func classifyMoveQuality(prevWP float64, curWP float64, prevEval *types.EvalResu
 
 	dropWP := -deltaWP
 	cpLoss, hasCPLoss := centipawnLoss(prevEval.ScoreCP, curEval.ScoreCP, moveIsWhite)
-	prevCP, hasPrevCP := moverCentipawn(prevEval.ScoreCP, moveIsWhite)
-	curCP, hasCurCP := moverCentipawn(curEval.ScoreCP, moveIsWhite)
 
-	if hasCPLoss && hasPrevCP && hasCurCP {
-		// Conversion mode: when already clearly winning and still winning,
-		// avoid over-flagging small eval dips.
-		if prevCP >= 600 && curCP >= 500 {
-			switch {
-			case cpLoss < 250 || dropWP < 0.06:
-				return ""
-			case cpLoss < 400 && dropWP < 0.12:
-				return types.MoveIssueInaccuracy
-			case cpLoss < 650 && dropWP < 0.22:
-				return types.MoveIssueMistake
-			default:
-				return types.MoveIssueBlunder
-			}
-		}
-
-		if prevCP >= 350 && curCP >= 200 {
-			switch {
-			case cpLoss < 160 || dropWP < 0.04:
-				return ""
-			case cpLoss < 280 && dropWP < 0.10:
-				return types.MoveIssueInaccuracy
-			case cpLoss < 500 && dropWP < 0.18:
-				return types.MoveIssueMistake
-			default:
-				return types.MoveIssueBlunder
-			}
-		}
-	}
-
-	if prevWP >= 0.90 {
-		if deltaWP >= -0.02 {
+	if prevWP >= puzzleConversionBeforeWP && curWP >= puzzleConversionAfterWP {
+		if !hasCPLoss || cpLoss < puzzleConversionMinCPLoss || dropWP < puzzleConversionMinDrop {
 			return ""
 		}
-		switch {
-		case dropWP < 0.05:
-			return types.MoveIssueInaccuracy
-		case dropWP < 0.12:
-			return types.MoveIssueMistake
-		default:
-			return types.MoveIssueBlunder
+		return types.MoveIssueBlunder
+	}
+
+	if hasCPLoss && cpLoss < puzzleMinCPLoss {
+		return ""
+	}
+	if !hasCPLoss && dropWP < puzzleBlunderWinProbDrop {
+		return ""
+	}
+	if dropWP < puzzleMinWinProbDrop {
+		if !hasCPLoss || cpLoss < puzzleMajorCPLoss {
+			return ""
 		}
 	}
 
-	if deltaWP >= -0.02 {
-		return ""
-	}
-	switch {
-	case dropWP < 0.06:
-		return types.MoveIssueInaccuracy
-	case dropWP < 0.15:
-		return types.MoveIssueMistake
-	default:
+	if dropWP >= puzzleBlunderWinProbDrop || (hasCPLoss && cpLoss >= puzzleMajorCPLoss) {
 		return types.MoveIssueBlunder
 	}
+
+	if hasCPLoss && cpLoss >= puzzleMinCPLoss && dropWP >= puzzleMinWinProbDrop {
+		return types.MoveIssueMistake
+	}
+
+	return ""
 }
 
-func isMissedOpportunity(prevWP float64, curWP float64) bool {
+func isMissedOpportunity(prevWP float64, curWP float64, prevEval *types.EvalResult, curEval *types.EvalResult, moveIsWhite bool) bool {
 	deltaWP := curWP - prevWP
 	if deltaWP >= 0 {
 		return false
 	}
 	dropWP := -deltaWP
 
-	const winningBeforeWP = 0.80
-	const stillBetterAfterWP = 0.55
-	const minDropWP = 0.05
+	if prevWP < puzzleMissedOpportunityBeforeWP || curWP < puzzleMissedOpportunityAfterWP || dropWP < puzzleMissedOpportunityMinDrop {
+		return false
+	}
 
-	return prevWP >= winningBeforeWP && curWP >= stillBetterAfterWP && dropWP >= minDropWP
+	cpLoss, hasCPLoss := centipawnLoss(prevEval.ScoreCP, curEval.ScoreCP, moveIsWhite)
+	if hasCPLoss && cpLoss < puzzleMissedOpportunityMinCPLoss {
+		return false
+	}
+	return true
 }
 
 func moverCentipawn(scoreCP *int, moverIsWhite bool) (int, bool) {

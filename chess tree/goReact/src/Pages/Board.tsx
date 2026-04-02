@@ -4,6 +4,8 @@ import { Chessboard } from "react-chessboard";
 import Engine, { hasSharedArrayBuffer } from "../engine";
 import type { EngineOptions } from "../engine";
 
+const MIN_EVAL_UPDATE_DEPTH = 12;
+
 const getGameStatus = (game: Chess) => {
   if (game.isCheckmate()) {
     const winner = game.turn() === "w" ? "Black" : "White";
@@ -41,6 +43,7 @@ const BoardPage = () => {
   const [depth, setDepth] = useState(0);
   const [bestLine, setBestLine] = useState("");
   const [possibleMate, setPossibleMate] = useState("");
+  const [isEvalReady, setIsEvalReady] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [engineLoading, setEngineLoading] = useState(true);
   const [topLines, setTopLines] = useState<Array<{ multipv: number; pv: string; scoreCp?: number; mate?: number }>>([]);
@@ -92,6 +95,7 @@ const BoardPage = () => {
     setBestLine("");
     setPossibleMate("");
     setPositionEvaluation(0);
+    setIsEvalReady(false);
     setTopLines([]);
     setIsAnalyzing(false);
 
@@ -116,40 +120,63 @@ const BoardPage = () => {
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine || engineLoading) return;
-    if (game.isGameOver() || game.isDraw()) return;
+    const positionGame = new Chess(position);
+    if (positionGame.isGameOver() || positionGame.isDraw()) {
+      setIsAnalyzing(false);
+      return;
+    }
+
+    const analyzedTurn = position.split(" ")[1] === "b" ? "b" : "w";
+    const turnMultiplier = analyzedTurn === "w" ? 1 : -1;
 
     setIsAnalyzing(true);
-    engine.evaluatePosition(game.fen(), 5000, 30);
+    setDepth(0);
+    setBestLine("");
+    setPossibleMate("");
+    setPositionEvaluation(0);
+    setIsEvalReady(false);
+    setTopLines([]);
 
-    engine.onMessage(({ lines }) => {
+    engine.onMessage(({ lines, bestMove }) => {
+      if (bestMove) {
+        setIsAnalyzing(false);
+      }
       if (!lines || lines.length === 0) return;
 
       const topLine = lines[0];
       setBestLine(topLine.pv);
 
-      if (topLine.mate !== undefined) {
-        setPositionEvaluation(topLine.mate > 0 ? 100 : -100);
-        setPossibleMate(String(topLine.mate));
-      } else if (topLine.scoreCp !== undefined) {
-        const evalScore = (game.turn() === "w" ? 1 : -1) * topLine.scoreCp / 100;
-        setPositionEvaluation(evalScore);
-        setPossibleMate("");
-      }
+      const topLineDepth = topLine.depth ?? 0;
+      if (topLineDepth > 0) setDepth(topLineDepth);
 
-      if (topLine.depth) setDepth(topLine.depth);
+      if (topLineDepth >= MIN_EVAL_UPDATE_DEPTH) {
+        setIsEvalReady(true);
+        const whitePerspectiveMate =
+          topLine.mate !== undefined ? topLine.mate * turnMultiplier : undefined;
+        const whitePerspectiveCp =
+          topLine.scoreCp !== undefined ? topLine.scoreCp * turnMultiplier : undefined;
+
+        if (whitePerspectiveMate !== undefined) {
+          setPositionEvaluation(whitePerspectiveMate > 0 ? 100 : -100);
+          setPossibleMate(String(whitePerspectiveMate));
+        } else if (whitePerspectiveCp !== undefined) {
+          setPositionEvaluation(whitePerspectiveCp / 100);
+          setPossibleMate("");
+        }
+      }
 
       setTopLines(
         lines.slice(0, multiPV).map(l => ({
           multipv: l.multipv,
           pv: l.pv,
-          scoreCp: l.scoreCp,
-          mate: l.mate
+          scoreCp: l.scoreCp !== undefined ? l.scoreCp * turnMultiplier : undefined,
+          mate: l.mate !== undefined ? l.mate * turnMultiplier : undefined
         }))
       );
-
-      setIsAnalyzing(false);
     });
-  }, [position, engineLoading, game]);
+
+    engine.evaluatePosition(position, 5000, 30);
+  }, [position, engineLoading]);
 
   // Play a line's first move
   const playLineMove = (uciLine: string) => {
@@ -164,7 +191,9 @@ const BoardPage = () => {
         engineRef.current?.stop();
         setBestLine("");
         setPossibleMate("");
+        setPositionEvaluation(0);
         setDepth(0);
+        setIsEvalReady(false);
         setTopLines([]);
         setPosition(game.fen());
         setFenInput(game.fen());
@@ -181,15 +210,19 @@ const BoardPage = () => {
   const displayedLines = topLines.slice(0, multiPV);
 
   const clampedEval = Math.max(-10, Math.min(10, positionEvaluation));
-  const whitePercentage = possibleMate
-    ? (Number(possibleMate) > 0 ? 100 : 0)
-    : 50 + (clampedEval / 10) * 50;
+  const whitePercentage = !isEvalReady
+    ? 50
+    : possibleMate
+      ? (Number(possibleMate) > 0 ? 100 : 0)
+      : 50 + (clampedEval / 10) * 50;
 
-  const displayEval = possibleMate
-    ? `#${possibleMate}`
-    : positionEvaluation >= 0
-      ? `+${positionEvaluation.toFixed(2)}`
-      : positionEvaluation.toFixed(2);
+  const displayEval = !isEvalReady
+    ? "..."
+    : possibleMate
+      ? `#${possibleMate}`
+      : positionEvaluation >= 0
+        ? `+${positionEvaluation.toFixed(2)}`
+        : positionEvaluation.toFixed(2);
 
   const onDrop = ({
     sourceSquare,
@@ -221,7 +254,9 @@ const BoardPage = () => {
     engineRef.current?.stop();
     setBestLine("");
     setPossibleMate("");
+    setPositionEvaluation(0);
     setDepth(0);
+    setIsEvalReady(false);
     setTopLines([]);
     return true;
   };
@@ -238,7 +273,9 @@ const BoardPage = () => {
       engineRef.current?.stop();
       setBestLine("");
       setPossibleMate("");
+      setPositionEvaluation(0);
       setDepth(0);
+      setIsEvalReady(false);
       setTopLines([]);
     } catch {
       setFenError("Invalid FEN. Please enter a valid position.");
@@ -258,6 +295,7 @@ const BoardPage = () => {
     setPossibleMate("");
     setPositionEvaluation(0);
     setDepth(0);
+    setIsEvalReady(false);
     setTopLines([]);
   };
 
@@ -387,7 +425,7 @@ const BoardPage = () => {
                   const evalDisplay = line.mate !== undefined
                     ? `#${line.mate}`
                     : line.scoreCp !== undefined
-                      ? `${(line.scoreCp / 100 * (game.turn() === "w" ? 1 : -1)) >= 0 ? "+" : ""}${(line.scoreCp / 100 * (game.turn() === "w" ? 1 : -1)).toFixed(1)}`
+                      ? `${line.scoreCp / 100 >= 0 ? "+" : ""}${(line.scoreCp / 100).toFixed(1)}`
                       : "?";
                   const sanLine = uciLineToSan(position, line.pv);
                   return (

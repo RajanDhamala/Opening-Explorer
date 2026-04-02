@@ -132,6 +132,14 @@ type PositonEval struct {
 	Evaluation EvalResult
 }
 
+type EvalLine struct {
+	MultiPV int
+	PV      []string
+	Depth   int
+	ScoreCP *int
+	Mate    *int
+}
+
 type EvalResult struct {
 	BestMove string
 	Ponder   string
@@ -139,6 +147,7 @@ type EvalResult struct {
 	Depth    int
 	ScoreCP  *int
 	Mate     *int
+	Lines    []EvalLine
 }
 
 type MoveIssueType string
@@ -214,4 +223,102 @@ type JwtObj struct {
 	ID       string
 	Fullname string
 	Email    string
+}
+
+// IssueRow represents a row for pgx CopyFrom bulk insert into Issues table.
+// All fields are non-pointer to match the NOT NULL constraints in schema.
+type IssueRow struct {
+	ID             [16]byte // UUID as raw bytes for pgx
+	GameID         [16]byte
+	MoveIndex      int32
+	MoveSAN        string
+	MoveUCI        string
+	Fen            string
+	SideToMove     string
+	PlayerColor    string
+	UserColor      string
+	IssueType      string
+	PlayedBestMove bool
+	BestMove       string
+	Ponder         string
+	PV             []string
+	Depth          int32
+	ScoreCP        int32
+	Mate           int32
+	AfterScoreCP   int32
+	AfterMate      int32
+	WinProbBefore  float64
+	WinProbAfter   float64
+}
+
+// Values returns the row values in column order for pgx CopyFrom
+func (r IssueRow) Values() []interface{} {
+	return []interface{}{
+		r.ID,
+		r.GameID,
+		r.MoveIndex,
+		r.MoveSAN,
+		r.MoveUCI,
+		r.Fen,
+		r.SideToMove,
+		r.PlayerColor,
+		r.UserColor,
+		r.IssueType,
+		r.PlayedBestMove,
+		r.BestMove,
+		r.Ponder,
+		r.PV,
+		r.Depth,
+		r.ScoreCP,
+		r.Mate,
+		r.AfterScoreCP,
+		r.AfterMate,
+		r.WinProbBefore,
+		r.WinProbAfter,
+	}
+}
+
+// MoveIssueToRow converts MoveIssue to IssueRow for bulk insert.
+// Handles pointer-to-value conversion for ScoreCP/Mate fields (nil → 0).
+func MoveIssueToRow(issue MoveIssue, issueID [16]byte, gameID [16]byte) IssueRow {
+	scoreCP := int32(0)
+	if issue.ScoreCP != nil {
+		scoreCP = int32(*issue.ScoreCP)
+	}
+	mate := int32(0)
+	if issue.Mate != nil {
+		mate = int32(*issue.Mate)
+	}
+	afterScoreCP := int32(0)
+	if issue.AfterScoreCP != nil {
+		afterScoreCP = int32(*issue.AfterScoreCP)
+	}
+	afterMate := int32(0)
+	if issue.AfterMate != nil {
+		afterMate = int32(*issue.AfterMate)
+	}
+
+	return IssueRow{
+		ID:             issueID,
+		GameID:         gameID,
+		MoveIndex:      int32(issue.MoveIndex),
+		MoveSAN:        issue.MoveSAN,
+		MoveUCI:        issue.MoveUCI,
+		Fen:            issue.Fen,
+		SideToMove:     issue.SideToMove,
+		PlayerColor:    issue.PlayerColor,
+		UserColor:      issue.UserColor,
+		IssueType:      string(issue.IssueType),
+		PlayedBestMove: issue.PlayedBestMove,
+		BestMove:       issue.BestMove,
+		Ponder:         issue.Ponder,
+		PV:             issue.PV,
+		Depth:          int32(issue.Depth),
+		ScoreCP:        scoreCP,
+		Mate:           mate,
+		AfterScoreCP:   afterScoreCP,
+		AfterMate:      afterMate,
+		WinProbBefore:  issue.WinProbBefore,
+		WinProbAfter:   issue.WinProbAfter,
+	}
 }
