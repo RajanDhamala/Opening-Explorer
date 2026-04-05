@@ -22,4 +22,5 @@ func GameRouter(app *fiber.App, controller *Controllers.Controller) {
 	GameRouter.Get("/issues/:game_id", middlewares.UserAuthenticate, controller.GetGameIssues)
 	GameRouter.Get("/puzzles", middlewares.UserAuthenticate, controller.GetUserPuzzles)
 	GameRouter.Get("/puzzles/:type", middlewares.UserAuthenticate, controller.GetPuzzlesByType)
+	GameRouter.Post("/eval", controller.EvalPostion)
 }

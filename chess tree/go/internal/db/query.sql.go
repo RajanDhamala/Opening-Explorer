@@ -181,6 +181,8 @@ INSERT INTO Issues (
   MoveIndex,
   MoveSAN,
   MoveUCI,
+  PlayedMoveUCI,
+  PlayedMoveSAN,
   Fen,
   SideToMove,
   PlayerColor,
@@ -196,10 +198,13 @@ INSERT INTO Issues (
   AfterScoreCP,
   AfterMate,
   WinProbBefore,
-  WinProbAfter
+  WinProbAfter,
+  CPDelta,
+  WinProbDelta
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+  $22, $23, $24, $25
 )
 `
 
@@ -209,6 +214,8 @@ type CreateIssueParams struct {
 	Moveindex      int32       `json:"moveindex"`
 	Movesan        string      `json:"movesan"`
 	Moveuci        string      `json:"moveuci"`
+	Playedmoveuci  string      `json:"playedmoveuci"`
+	Playedmovesan  string      `json:"playedmovesan"`
 	Fen            string      `json:"fen"`
 	Sidetomove     string      `json:"sidetomove"`
 	Playercolor    string      `json:"playercolor"`
@@ -225,6 +232,8 @@ type CreateIssueParams struct {
 	Aftermate      int32       `json:"aftermate"`
 	Winprobbefore  float64     `json:"winprobbefore"`
 	Winprobafter   float64     `json:"winprobafter"`
+	Cpdelta        int32       `json:"cpdelta"`
+	Winprobdelta   float64     `json:"winprobdelta"`
 }
 
 func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) error {
@@ -234,6 +243,8 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) error 
 		arg.Moveindex,
 		arg.Movesan,
 		arg.Moveuci,
+		arg.Playedmoveuci,
+		arg.Playedmovesan,
 		arg.Fen,
 		arg.Sidetomove,
 		arg.Playercolor,
@@ -250,12 +261,75 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) error 
 		arg.Aftermate,
 		arg.Winprobbefore,
 		arg.Winprobafter,
+		arg.Cpdelta,
+		arg.Winprobdelta,
 	)
 	return err
 }
 
+const getFenEvaluation = `-- name: GetFenEvaluation :many
+SELECT
+  fen,
+  bestmove,
+  pv,
+  depth,
+  scorecp,
+  mate,
+  playedmoveuci AS played_move_uci,
+  playedmovesan AS played_move_san,
+  cpdelta,
+  winprobdelta
+FROM issues
+WHERE fen = $1
+ORDER BY depth DESC, moveindex ASC
+`
+
+type GetFenEvaluationRow struct {
+	Fen           string   `json:"fen"`
+	Bestmove      string   `json:"bestmove"`
+	Pv            []string `json:"pv"`
+	Depth         int32    `json:"depth"`
+	Scorecp       int32    `json:"scorecp"`
+	Mate          int32    `json:"mate"`
+	PlayedMoveUci string   `json:"played_move_uci"`
+	PlayedMoveSan string   `json:"played_move_san"`
+	Cpdelta       int32    `json:"cpdelta"`
+	Winprobdelta  float64  `json:"winprobdelta"`
+}
+
+func (q *Queries) GetFenEvaluation(ctx context.Context, fen string) ([]GetFenEvaluationRow, error) {
+	rows, err := q.db.Query(ctx, getFenEvaluation, fen)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFenEvaluationRow
+	for rows.Next() {
+		var i GetFenEvaluationRow
+		if err := rows.Scan(
+			&i.Fen,
+			&i.Bestmove,
+			&i.Pv,
+			&i.Depth,
+			&i.Scorecp,
+			&i.Mate,
+			&i.PlayedMoveUci,
+			&i.PlayedMoveSan,
+			&i.Cpdelta,
+			&i.Winprobdelta,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getIssues = `-- name: GetIssues :many
-SELECT _id, game_id, moveindex, movesan, moveuci, fen, sidetomove, playercolor, usercolor, issuetype, playedbestmove, bestmove, ponder, pv, depth, scorecp, mate, afterscorecp, aftermate, winprobbefore, winprobafter FROM issues WHERE game_id=$1
+SELECT _id, game_id, moveindex, movesan, moveuci, fen, sidetomove, playercolor, usercolor, issuetype, playedbestmove, bestmove, ponder, pv, depth, scorecp, mate, afterscorecp, aftermate, winprobbefore, winprobafter, playedmoveuci, playedmovesan, cpdelta, winprobdelta FROM issues WHERE game_id=$1
 `
 
 func (q *Queries) GetIssues(ctx context.Context, gameID pgtype.UUID) ([]Issue, error) {
@@ -289,6 +363,10 @@ func (q *Queries) GetIssues(ctx context.Context, gameID pgtype.UUID) ([]Issue, e
 			&i.Aftermate,
 			&i.Winprobbefore,
 			&i.Winprobafter,
+			&i.Playedmoveuci,
+			&i.Playedmovesan,
+			&i.Cpdelta,
+			&i.Winprobdelta,
 		); err != nil {
 			return nil, err
 		}
@@ -301,7 +379,7 @@ func (q *Queries) GetIssues(ctx context.Context, gameID pgtype.UUID) ([]Issue, e
 }
 
 const getPuzzlesByType = `-- name: GetPuzzlesByType :many
-SELECT i._id, i.game_id, i.moveindex, i.movesan, i.moveuci, i.fen, i.sidetomove, i.playercolor, i.usercolor, i.issuetype, i.playedbestmove, i.bestmove, i.ponder, i.pv, i.depth, i.scorecp, i.mate, i.afterscorecp, i.aftermate, i.winprobbefore, i.winprobafter FROM issues i
+SELECT i._id, i.game_id, i.moveindex, i.movesan, i.moveuci, i.fen, i.sidetomove, i.playercolor, i.usercolor, i.issuetype, i.playedbestmove, i.bestmove, i.ponder, i.pv, i.depth, i.scorecp, i.mate, i.afterscorecp, i.aftermate, i.winprobbefore, i.winprobafter, i.playedmoveuci, i.playedmovesan, i.cpdelta, i.winprobdelta FROM issues i
 JOIN games g ON i.game_id = g._id
 WHERE g.user_id = $1 AND i.issuetype = $2
 ORDER BY i.moveindex
@@ -343,6 +421,10 @@ func (q *Queries) GetPuzzlesByType(ctx context.Context, arg GetPuzzlesByTypePara
 			&i.Aftermate,
 			&i.Winprobbefore,
 			&i.Winprobafter,
+			&i.Playedmoveuci,
+			&i.Playedmovesan,
+			&i.Cpdelta,
+			&i.Winprobdelta,
 		); err != nil {
 			return nil, err
 		}
@@ -368,7 +450,7 @@ func (q *Queries) GetPuzzlesCount(ctx context.Context, userID int32) (int64, err
 }
 
 const getUserIssues = `-- name: GetUserIssues :many
-SELECT i._id, i.game_id, i.moveindex, i.movesan, i.moveuci, i.fen, i.sidetomove, i.playercolor, i.usercolor, i.issuetype, i.playedbestmove, i.bestmove, i.ponder, i.pv, i.depth, i.scorecp, i.mate, i.afterscorecp, i.aftermate, i.winprobbefore, i.winprobafter FROM issues i
+SELECT i._id, i.game_id, i.moveindex, i.movesan, i.moveuci, i.fen, i.sidetomove, i.playercolor, i.usercolor, i.issuetype, i.playedbestmove, i.bestmove, i.ponder, i.pv, i.depth, i.scorecp, i.mate, i.afterscorecp, i.aftermate, i.winprobbefore, i.winprobafter, i.playedmoveuci, i.playedmovesan, i.cpdelta, i.winprobdelta FROM issues i
 JOIN games g ON i.game_id = g._id
 WHERE g.user_id = $1
 ORDER BY i.moveindex
@@ -405,6 +487,10 @@ func (q *Queries) GetUserIssues(ctx context.Context, userID int32) ([]Issue, err
 			&i.Aftermate,
 			&i.Winprobbefore,
 			&i.Winprobafter,
+			&i.Playedmoveuci,
+			&i.Playedmovesan,
+			&i.Cpdelta,
+			&i.Winprobdelta,
 		); err != nil {
 			return nil, err
 		}

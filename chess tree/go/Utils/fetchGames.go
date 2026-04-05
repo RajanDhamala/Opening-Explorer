@@ -33,6 +33,7 @@ func FetchProcess(username string) (*types.UserGames, error) {
 	}
 
 	igotdata := types.ArchiveResponse{}
+	fmt.Println("data received from endpoint:", string(data))
 	if err := json.Unmarshal(data, &igotdata); err != nil {
 		return nil, errors.New("failed to parse the JSON")
 	}
@@ -40,7 +41,7 @@ func FetchProcess(username string) (*types.UserGames, error) {
 	if len(igotdata.Data.Archives) == 0 {
 		return nil, errors.New("no archives found")
 	}
-	url := igotdata.Data.Archives[len(igotdata.Data.Archives)-1]
+	url := igotdata.Data.Archives[len(igotdata.Data.Archives)-4]
 	parts := strings.Split(url, "/")
 	timeframe := types.Timeline{
 		Year:  parts[len(parts)-2],

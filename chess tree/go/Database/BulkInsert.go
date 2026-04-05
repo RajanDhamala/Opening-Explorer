@@ -15,6 +15,8 @@ var issueColumns = []string{
 	"moveindex",
 	"movesan",
 	"moveuci",
+	"playedmoveuci",
+	"playedmovesan",
 	"fen",
 	"sidetomove",
 	"playercolor",
@@ -31,6 +33,8 @@ var issueColumns = []string{
 	"aftermate",
 	"winprobbefore",
 	"winprobafter",
+	"cpdelta",
+	"winprobdelta",
 }
 
 // issueRowSource implements pgx.CopyFromSource for IssueRow slice

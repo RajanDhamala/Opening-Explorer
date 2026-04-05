@@ -90,6 +90,10 @@ type Issue struct {
 	Aftermate      int32       `json:"aftermate"`
 	Winprobbefore  float64     `json:"winprobbefore"`
 	Winprobafter   float64     `json:"winprobafter"`
+	Playedmoveuci  string      `json:"playedmoveuci"`
+	Playedmovesan  string      `json:"playedmovesan"`
+	Cpdelta        int32       `json:"cpdelta"`
+	Winprobdelta   float64     `json:"winprobdelta"`
 }
 
 type User struct {

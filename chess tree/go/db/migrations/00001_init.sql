@@ -50,7 +50,11 @@ CREATE TABLE Issues(
 	AfterScoreCP int NOT NULL,
 	AfterMate    int NOT NULL,
 	WinProbBefore DOUBLE PRECISION NOT NULL,
-	WinProbAfter  DOUBLE PRECISION NOT NULL
+	WinProbAfter  DOUBLE PRECISION NOT NULL,
+  playedmoveuci TEXT NOT NULL,
+  playedmovesan TEXT NOT NULL,
+  cpdelta int NOT NULL, 
+  winprobdelta DOUBLE PRECISION NOT NULL 
 );
 
 -- +goose Down

@@ -1,8 +1,11 @@
 package Controllers
 
 import (
+	"context"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	"chess/Database"
 	"chess/ProcessPipline"
@@ -10,6 +13,7 @@ import (
 	"chess/Utils"
 	"chess/internal/db"
 
+	stockfish "github.com/RajanDhamala/go-stockfish"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -53,7 +57,7 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 			"error": err.Error(),
 		})
 	}
-	username := "I_use_NVIM_Btw"
+	username := "NbcWala"
 	evalGames := utils.EvaluateAllGames(usrGames, username)
 	gameResults := Processpipline.PlayGames(evalGames, utils.Client)
 
@@ -161,15 +165,15 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 	}
 
 	return c.Status(200).JSON(fiber.Map{
-		"message":           "we evaluated all fetched games",
-		"data":              gameResults,
-		"total":             totalIssues,
-		"processed_games":   len(gameResults),
-		"games_with_issue":  gamesWithIssues,
-		"dbfailed":          failedCount,
-		"dbsuccess":         successCount,
-		"issues_inserted":   issueInsertCount,
-		"issues_failed":     issueFailedCount,
+		"message":          "we evaluated all fetched games",
+		"data":             gameResults,
+		"total":            totalIssues,
+		"processed_games":  len(gameResults),
+		"games_with_issue": gamesWithIssues,
+		"dbfailed":         failedCount,
+		"dbsuccess":        successCount,
+		"issues_inserted":  issueInsertCount,
+		"issues_failed":    issueFailedCount,
 	})
 }
 
@@ -302,5 +306,80 @@ func (ctrl *Controller) GetPuzzlesByType(c *fiber.Ctx) error {
 		"issue_type": issueType,
 		"total":      len(issues),
 		"puzzles":    issues,
+	})
+}
+
+type EvalRequest struct {
+	FEN string `json:"fen"`
+}
+
+type EvalLineResponse struct {
+	MultiPV int      `json:"multipv"`
+	PV      []string `json:"pv"`
+	Depth   int      `json:"depth"`
+	ScoreCP *int     `json:"score_cp"`
+	Mate    *int     `json:"mate"`
+}
+
+func (ctrl *Controller) EvalPostion(c *fiber.Ctx) error {
+	var req EvalRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid request body",
+		})
+	}
+	req.FEN = strings.TrimSpace(req.FEN)
+	if req.FEN == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "fen is required",
+		})
+	}
+	if utils.Client == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "stockfish client not initialized",
+		})
+	}
+
+	evalCtx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+
+	result, err := utils.Client.Evaluate(evalCtx, stockfish.EvalRequest{
+		FEN:   req.FEN,
+		Depth: 20,
+		// MoveTime: 300 * time.Millisecond,
+		MultiPV: 1,
+	})
+	if err != nil {
+
+		fmt.Println("error:", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to evaluate position",
+			"err":   err,
+		})
+	}
+
+	lines := make([]EvalLineResponse, 0, len(result.Lines))
+	for _, line := range result.Lines {
+		lines = append(lines, EvalLineResponse{
+			MultiPV: line.MultiPV,
+			PV:      append([]string(nil), line.PV...),
+			Depth:   line.Depth,
+			ScoreCP: line.ScoreCP,
+			Mate:    line.Mate,
+		})
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"message": "position evaluated successfully",
+		"fen":     req.FEN,
+		"evaluation": fiber.Map{
+			"best_move": result.BestMove,
+			"ponder":    result.Ponder,
+			"pv":        result.PV,
+			"depth":     result.Depth,
+			"score_cp":  result.ScoreCP,
+			"mate":      result.Mate,
+			"lines":     lines,
+		},
 	})
 }

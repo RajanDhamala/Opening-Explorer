@@ -153,13 +153,10 @@ type EvalResult struct {
 type MoveIssueType string
 
 const (
-	MoveIssueInaccuracy        MoveIssueType = "inaccuracy"
-	MoveIssueMistake           MoveIssueType = "mistake"
-	MoveIssueBlunder           MoveIssueType = "blunder"
-	MoveIssueMissedOpportunity MoveIssueType = "missed_opportunity"
-	MoveIssueForcedMate        MoveIssueType = "forced_mate_available"
-	MoveIssueForcedMateMissed  MoveIssueType = "forced_mate_missed"
-	MoveIssueBeingMated        MoveIssueType = "being_mated"
+	MoveIssueMistake          MoveIssueType = "mistake"
+	MoveIssueBlunder          MoveIssueType = "blunder"
+	MoveIssueLostAdvantage    MoveIssueType = "lost_advantage"
+	MoveIssueForcedMateMissed MoveIssueType = "forced_mate_missed"
 )
 
 type MoveIssue struct {
@@ -185,6 +182,8 @@ type MoveIssue struct {
 
 	WinProbBefore float64
 	WinProbAfter  float64
+	CPDelta       int
+	WinProbDelta  float64
 }
 
 type EvalGameInput struct {
@@ -233,6 +232,8 @@ type IssueRow struct {
 	MoveIndex      int32
 	MoveSAN        string
 	MoveUCI        string
+	PlayedMoveUCI  string
+	PlayedMoveSAN  string
 	Fen            string
 	SideToMove     string
 	PlayerColor    string
@@ -249,6 +250,8 @@ type IssueRow struct {
 	AfterMate      int32
 	WinProbBefore  float64
 	WinProbAfter   float64
+	CPDelta        int32
+	WinProbDelta   float64
 }
 
 // Values returns the row values in column order for pgx CopyFrom
@@ -259,6 +262,8 @@ func (r IssueRow) Values() []interface{} {
 		r.MoveIndex,
 		r.MoveSAN,
 		r.MoveUCI,
+		r.PlayedMoveUCI,
+		r.PlayedMoveSAN,
 		r.Fen,
 		r.SideToMove,
 		r.PlayerColor,
@@ -275,6 +280,8 @@ func (r IssueRow) Values() []interface{} {
 		r.AfterMate,
 		r.WinProbBefore,
 		r.WinProbAfter,
+		r.CPDelta,
+		r.WinProbDelta,
 	}
 }
 
@@ -304,6 +311,8 @@ func MoveIssueToRow(issue MoveIssue, issueID [16]byte, gameID [16]byte) IssueRow
 		MoveIndex:      int32(issue.MoveIndex),
 		MoveSAN:        issue.MoveSAN,
 		MoveUCI:        issue.MoveUCI,
+		PlayedMoveUCI:  issue.MoveUCI,
+		PlayedMoveSAN:  issue.MoveSAN,
 		Fen:            issue.Fen,
 		SideToMove:     issue.SideToMove,
 		PlayerColor:    issue.PlayerColor,
@@ -320,5 +329,7 @@ func MoveIssueToRow(issue MoveIssue, issueID [16]byte, gameID [16]byte) IssueRow
 		AfterMate:      afterMate,
 		WinProbBefore:  issue.WinProbBefore,
 		WinProbAfter:   issue.WinProbAfter,
+		CPDelta:        int32(issue.CPDelta),
+		WinProbDelta:   issue.WinProbDelta,
 	}
 }

@@ -107,9 +107,7 @@ func ParsePgnBody(body string) []types.Move {
 		if strings.HasPrefix(item, "0:") {
 			continue
 		}
-		if strings.HasPrefix(item, "1-0") || strings.HasPrefix(item, "0-1") {
-			// fmt.Println("game is over")
-			// Result = item
+		if isPGNResultToken(item) {
 			continue
 		}
 
@@ -121,6 +119,15 @@ func ParsePgnBody(body string) []types.Move {
 	// fmt.Println(string(b))
 	// fmt.Println("result:", Result)
 	return moves
+}
+
+func isPGNResultToken(token string) bool {
+	switch strings.TrimSpace(token) {
+	case "1-0", "0-1", "1/2-1/2", "*":
+		return true
+	default:
+		return false
+	}
 }
 
 func ParseAllGames(allgames *types.UserGames, username string) {

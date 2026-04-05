@@ -96,6 +96,8 @@ INSERT INTO Issues (
   MoveIndex,
   MoveSAN,
   MoveUCI,
+  PlayedMoveUCI,
+  PlayedMoveSAN,
   Fen,
   SideToMove,
   PlayerColor,
@@ -111,10 +113,13 @@ INSERT INTO Issues (
   AfterScoreCP,
   AfterMate,
   WinProbBefore,
-  WinProbAfter
+  WinProbAfter,
+  CPDelta,
+  WinProbDelta
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+  $22, $23, $24, $25
 );
 
 -- name: GetIssues :many
@@ -136,3 +141,25 @@ ORDER BY i.moveindex;
 SELECT COUNT(*) FROM issues i
 JOIN games g ON i.game_id = g._id
 WHERE g.user_id = $1;
+
+-- name: GetFenEvaluation :many
+SELECT
+  fen,
+  bestmove,
+  pv,
+  depth,
+  scorecp,
+  mate,
+  playedmoveuci AS played_move_uci,
+  playedmovesan AS played_move_san,
+  cpdelta,
+  winprobdelta
+FROM issues
+WHERE fen = $1
+ORDER BY depth DESC, moveindex ASC;
+
+--name : CursorPuzzle :many
+
+
+
+
