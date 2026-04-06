@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import axios from "axios";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Chess, type Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { EvalBar } from "../components/EvalBar";
@@ -8,7 +8,6 @@ import { EngineLines } from "../components/EngineLines";
 import { MoveNavigator } from "../components/MoveNavigator";
 import { PuzzleProgress } from "../components/PuzzleProgress";
 import { uciToSan, pvToSan, type EngineLine, type PuzzleAttempt, type BoardArrow, colors } from "../components/puzzleUtils";
-
 
 interface Puzzle {
   _id: string;
@@ -34,6 +33,28 @@ interface Puzzle {
   winprobafter: number;
 }
 
+interface EvalLineResponse {
+  multipv: number;
+  pv: string[];
+  depth: number;
+  score_cp: number | null;
+  mate: number | null;
+}
+
+interface EvalApiResponse {
+  message: string;
+  fen: string;
+  evaluation: {
+    best_move: string;
+    ponder: string;
+    pv: string[];
+    depth: number;
+    score_cp: number | null;
+    mate: number | null;
+    lines: EvalLineResponse[];
+  };
+}
+
 interface PuzzlesResponse {
   puzzles?: Puzzle[];
   total?: number;
@@ -45,7 +66,9 @@ const ISSUE_TYPES = [
   { value: "mistake", label: "Mistakes" },
   { value: "inaccuracy", label: "Inaccuracies" },
 ];
+
 const MIN_EVAL_UPDATE_DEPTH = 12;
+const EVAL_API = "http://localhost:3030/games/eval";
 
 const fetchPuzzles = async (type: string): Promise<Puzzle[]> => {
   const url = type === "all"
@@ -55,8 +78,13 @@ const fetchPuzzles = async (type: string): Promise<Puzzle[]> => {
   return Array.isArray(response.data?.puzzles) ? response.data.puzzles : [];
 };
 
+const evalPosition = async (fen: string): Promise<EvalApiResponse> => {
+  const response = await axios.post<EvalApiResponse>(EVAL_API, { fen }, { withCredentials: true });
+  return response.data;
+};
 
-const PuzzlesPage = () => {
+const CustomEval = () => {
+  // ─── State ─────────────────────────────────────────────────
   const [selectedType, setSelectedType] = useState("all");
   const [puzzleIndex, setPuzzleIndex] = useState(0);
   const [attempts, setAttempts] = useState<PuzzleAttempt[]>([]);
@@ -78,11 +106,9 @@ const PuzzlesPage = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isPlayingLine, setIsPlayingLine] = useState(false);
 
-  const stockfishRef = useRef<Worker | null>(null);
-  const stockfishReadyRef = useRef(false);
-  const currentFenRef = useRef<string>("");
-  const activeAnalysisFenRef = useRef<string>("");
+  const currentAnalysisAbortRef = useRef<AbortController | null>(null);
   const playLineTimeoutRef = useRef<number | null>(null);
+  const queryClient = useQueryClient();
 
   const { data: puzzles = [], isLoading, isError } = useQuery({
     queryKey: ["puzzles", selectedType],
@@ -93,177 +119,96 @@ const PuzzlesPage = () => {
   const currentFen = positionHistory[currentMoveIndex + 1] || puzzle?.fen || "";
   const isFlipped = puzzle?.playercolor === "black";
 
-  useEffect(() => {
-    currentFenRef.current = currentFen;
-  }, [currentFen]);
+  // TanStack Query hook for eval - caches by FEN
+  useQuery({
+    queryKey: ["eval", currentFen],
+    queryFn: () => evalPosition(currentFen),
+    enabled: showEngine && !!currentFen,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+  });
 
   useEffect(() => {
     return () => {
-      if (playLineTimeoutRef.current) {
-        clearTimeout(playLineTimeoutRef.current);
-      }
+      if (playLineTimeoutRef.current) clearTimeout(playLineTimeoutRef.current);
+      if (currentAnalysisAbortRef.current) currentAnalysisAbortRef.current.abort();
     };
   }, []);
 
-  const pendingFenRef = useRef<string | null>(null);
-  const waitingForReadyRef = useRef(false);
+  const analyzePosition = useCallback(async (fen: string) => {
+    if (!showEngine || !fen) return;
 
-  useEffect(() => {
-    console.log("🔧 Initializing Stockfish 17.1 Lite worker...");
-
-    const worker = new Worker("/stockfish/stockfish-17.1-lite-single-03e3232.js");
-
-    worker.onmessage = (e: MessageEvent) => {
-      const line = e.data;
-      if (typeof line === "string" && !line.startsWith("info depth")) {
-        console.log(" Stockfish:", line);
-      }
-
-      if (typeof line === "string" && line.includes("uciok")) {
-        console.log(" Stockfish UCI OK, configuring...");
-        worker.postMessage("setoption name Hash value 32");
-        worker.postMessage("setoption name MultiPV value 3");
-        worker.postMessage("isready");
-      }
-
-      if (typeof line === "string" && line.includes("readyok")) {
-        console.log(" Stockfish READY!");
-        stockfishReadyRef.current = true;
-
-        if (waitingForReadyRef.current && pendingFenRef.current) {
-          const fenToAnalyze = pendingFenRef.current;
-          activeAnalysisFenRef.current = fenToAnalyze;
-          console.log(" Starting pending analysis for:", fenToAnalyze);
-          worker.postMessage(`position fen ${fenToAnalyze}`);
-          worker.postMessage("go depth 22");
-          pendingFenRef.current = null;
-          waitingForReadyRef.current = false;
-        }
-      }
-
-      // Parse multipv info lines
-      if (typeof line === "string" && line.includes("multipv") && line.includes("score")) {
-        if (waitingForReadyRef.current) {
-          return;
-        }
-        const depthMatch = line.match(/depth (\d+)/);
-        const pvIdxMatch = line.match(/multipv (\d+)/);
-        const scoreMatch = line.match(/score (cp|mate) (-?\d+)/);
-        const pvMatch = line.match(/ pv (.+)/);
-
-        if (depthMatch && pvIdxMatch) {
-          const depth = parseInt(depthMatch[1], 10);
-          const pvIdx = parseInt(pvIdxMatch[1], 10) - 1;
-
-          let score: number | null = null;
-          let mate: number | null = null;
-          if (scoreMatch) {
-            if (scoreMatch[1] === "cp") {
-              score = parseInt(scoreMatch[2], 10);
-            } else {
-              mate = parseInt(scoreMatch[2], 10);
-            }
-          }
-
-          const analysisFen = activeAnalysisFenRef.current || currentFenRef.current;
-          const analyzedTurn = analysisFen.split(" ")[1] === "b" ? "b" : "w";
-          const turnMultiplier = analyzedTurn === "w" ? 1 : -1;
-
-          if (score !== null) {
-            score = score * turnMultiplier;
-          }
-          if (mate !== null) {
-            mate = mate * turnMultiplier;
-          }
-
-          const pvMoves = pvMatch ? pvMatch[1].split(" ").filter(m => m.length >= 4) : [];
-          const pvSan = currentFenRef.current ? pvToSan(currentFenRef.current, pvMoves) : pvMoves;
-
-          setEngineDepth(depth);
-          setEngineLines(prev => {
-            const updated = [...prev];
-            updated[pvIdx] = { pvIdx, depth, score, mate, pv: pvMoves, pvSan };
-            return updated.slice(0, 3);
-          });
-
-          if (pvIdx === 0 && depth >= MIN_EVAL_UPDATE_DEPTH) {
-            setStableEngineEval({ score, mate });
-          }
-        }
-      }
-
-      if (typeof line === "string" && line.includes("bestmove")) {
-        if (!waitingForReadyRef.current) {
-          console.log(" Stockfish analysis complete");
-          setIsAnalyzing(false);
-        }
-      }
-    };
-
-    worker.onerror = (e) => {
-      console.error(" Stockfish worker error:", e);
-      setIsAnalyzing(false);
-      waitingForReadyRef.current = false;
-      pendingFenRef.current = null;
-    };
-
-    console.log(" Sending 'uci' command...");
-    worker.postMessage("uci");
-    stockfishRef.current = worker;
-
-    return () => {
-      console.log(" Terminating Stockfish worker");
-      worker.postMessage("quit");
-      worker.terminate();
-    };
-  }, []);
-
-  const analyzePosition = useCallback((fen: string, force = false) => {
-    console.log(" analyzePosition called:", { fen, force, showEngine, ready: stockfishReadyRef.current, worker: !!stockfishRef.current });
-
-    if (!stockfishRef.current) {
-      console.error(" No stockfish worker!");
-      return;
+    if (currentAnalysisAbortRef.current) {
+      currentAnalysisAbortRef.current.abort();
     }
-
-    // When force=true (user clicked analyze), skip ready check - send command anyway
-    if (!force) {
-      if (!stockfishReadyRef.current) {
-        console.log(" Stockfish not ready yet, skipping auto-analyze");
-        return;
-      }
-      if (!showEngine) {
-        console.log(" Engine not enabled, skipping");
-        return;
-      }
-    }
-
-    console.log(" Stopping current analysis and starting new...");
-
-    // Stop current analysis
-    stockfishRef.current.postMessage("stop");
+    const controller = new AbortController();
+    currentAnalysisAbortRef.current = controller;
 
     setEngineLines([]);
     setEngineDepth(0);
     setStableEngineEval(null);
     setIsAnalyzing(true);
 
-    stockfishRef.current.postMessage("ucinewgame");
-    activeAnalysisFenRef.current = fen;
-    pendingFenRef.current = fen;
-    waitingForReadyRef.current = true;
-    stockfishRef.current.postMessage("isready");
-  }, [showEngine]);
+    try {
+      // Check cache first
+      const cached = queryClient.getQueryData<EvalApiResponse>(["eval", fen]);
+      const data = cached ?? await queryClient.fetchQuery<EvalApiResponse>({
+        queryKey: ["eval", fen],
+        queryFn: () => evalPosition(fen),
+        staleTime: 5 * 60 * 1000,
+      });
+
+      if (controller.signal.aborted) return;
+
+      const { evaluation } = data;
+      const turn = fen.split(" ")[1];
+      const turnMultiplier = turn === "w" ? 1 : -1;
+
+      const lines: EngineLine[] = evaluation.lines.map((line, idx) => {
+        const score = line.score_cp !== null ? line.score_cp * turnMultiplier : null;
+        const mate = line.mate !== null ? line.mate * turnMultiplier : null;
+        const pvSan = pvToSan(fen, line.pv);
+        return {
+          pvIdx: idx,
+          depth: line.depth,
+          score,
+          mate,
+          pv: line.pv,
+          pvSan,
+        };
+      });
+
+      setEngineLines(lines);
+
+      if (evaluation.depth >= MIN_EVAL_UPDATE_DEPTH && lines.length > 0) {
+        setEngineDepth(evaluation.depth);
+        setStableEngineEval({
+          score: lines[0].score ?? null,
+          mate: lines[0].mate ?? null,
+        });
+      } else {
+        setEngineDepth(evaluation.depth);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "CanceledError") return;
+      console.error("Eval API error:", err);
+    } finally {
+      if (!controller.signal.aborted) {
+        setIsAnalyzing(false);
+      }
+    }
+  }, [showEngine, queryClient]);
 
   useEffect(() => {
     if (puzzle) {
-      // Cancel any ongoing line playback
       if (playLineTimeoutRef.current) {
         clearTimeout(playLineTimeoutRef.current);
         playLineTimeoutRef.current = null;
       }
+      if (currentAnalysisAbortRef.current) {
+        currentAnalysisAbortRef.current.abort();
+      }
       setIsPlayingLine(false);
-
       setPositionHistory([puzzle.fen]);
       setMoveHistory([]);
       setCurrentMoveIndex(-1);
@@ -296,15 +241,11 @@ const PuzzlesPage = () => {
   }, [showEngine]);
 
   const goToNextPuzzle = useCallback(() => {
-    if (puzzleIndex < puzzles.length - 1) {
-      setPuzzleIndex(i => i + 1);
-    }
+    if (puzzleIndex < puzzles.length - 1) setPuzzleIndex(i => i + 1);
   }, [puzzleIndex, puzzles.length]);
 
   const goToPrevPuzzle = useCallback(() => {
-    if (puzzleIndex > 0) {
-      setPuzzleIndex(i => i - 1);
-    }
+    if (puzzleIndex > 0) setPuzzleIndex(i => i - 1);
   }, [puzzleIndex]);
 
   const navigateToMove = useCallback((index: number) => {
@@ -317,7 +258,6 @@ const PuzzlesPage = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
-
       switch (e.key) {
         case "ArrowLeft":
           e.preventDefault();
@@ -353,48 +293,32 @@ const PuzzlesPage = () => {
           break;
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentMoveIndex, moveHistory.length, status, navigateToMove, goToNextPuzzle, goToPrevPuzzle]);
 
   const handleGetHint = useCallback(() => {
     if (!puzzle || status !== "playing") return;
-
     const expectedMove = puzzle.pv[expectedPvIndex] || puzzle.bestmove;
     if (!expectedMove || expectedMove.length < 4) return;
-    const from = expectedMove.slice(0, 2);
-    const to = expectedMove.slice(2, 4);
-
-    setArrows([{ from, to, color: colors.arrowGreen }]);
+    setArrows([{ from: expectedMove.slice(0, 2), to: expectedMove.slice(2, 4), color: colors.arrowGreen }]);
   }, [puzzle, status, expectedPvIndex]);
 
   const completePuzzle = useCallback(() => {
     if (!puzzle) return;
     setStatus("correct");
     setAttempts(prev => [...prev, { puzzleId: puzzle._id, result: "correct" }]);
-    if (autoAdvance) {
-      setTimeout(goToNextPuzzle, 800);
-    }
+    if (autoAdvance) setTimeout(goToNextPuzzle, 800);
   }, [puzzle, autoAdvance, goToNextPuzzle]);
 
-  // Animated line playback with 400ms delay between moves
-  const playLineWithDelay = useCallback((
-    fens: string[],
-    moves: string[],
-    onComplete?: () => void
-  ) => {
+  const playLineWithDelay = useCallback((fens: string[], moves: string[], onComplete?: () => void) => {
     if (fens.length === 0) return;
-
-    // Clear any existing timeout
-    if (playLineTimeoutRef.current) {
-      clearTimeout(playLineTimeoutRef.current);
-    }
+    if (playLineTimeoutRef.current) clearTimeout(playLineTimeoutRef.current);
 
     setIsPlayingLine(true);
     setPositionHistory(fens);
     setMoveHistory(moves);
-    setCurrentMoveIndex(-1); // Start from initial position
+    setCurrentMoveIndex(-1);
     setArrows([]);
 
     let currentIdx = 0;
@@ -408,14 +332,11 @@ const PuzzlesPage = () => {
         onComplete?.();
       }
     };
-
-    // Start playing after a short initial delay
     playLineTimeoutRef.current = window.setTimeout(playNextMove, 400);
   }, []);
 
   const handleViewSolution = useCallback(() => {
     if (!puzzle || isPlayingLine) return;
-
     try {
       const game = new Chess(puzzle.fen);
       const fens = [puzzle.fen];
@@ -437,25 +358,19 @@ const PuzzlesPage = () => {
       setStatus("solution");
       setExpectedPvIndex(0);
       setLastExpectedMoveSan("");
-
       if (status === "playing") {
         setAttempts(prev => [...prev, { puzzleId: puzzle._id, result: "skipped" }]);
       }
-
-      // Play the line with animated delay
       playLineWithDelay(fens, moves);
     } catch {
-      // Ignore
+      // ignore
     }
   }, [puzzle, status, isPlayingLine, playLineWithDelay]);
 
   const handlePieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null }): boolean => {
     if (!puzzle || !targetSquare || isPlayingLine) return false;
 
-    // In analysis/solution mode, allow moves from both sides
     const isAnalysisMode = status === "solution" || status === "correct" || status === "wrong";
-
-    // Only restrict navigation in playing mode
     if (!isAnalysisMode && currentMoveIndex !== moveHistory.length - 1 && moveHistory.length > 0) return false;
 
     try {
@@ -465,7 +380,6 @@ const PuzzlesPage = () => {
         to: targetSquare as Square,
         promotion: "q",
       });
-
       if (!move) return false;
 
       const newFen = game.fen();
@@ -523,25 +437,19 @@ const PuzzlesPage = () => {
           const nextUserIndex = opponentIndex + 1;
 
           setIsPlayingLine(true);
-          if (playLineTimeoutRef.current) {
-            clearTimeout(playLineTimeoutRef.current);
-          }
+          if (playLineTimeoutRef.current) clearTimeout(playLineTimeoutRef.current);
           playLineTimeoutRef.current = window.setTimeout(() => {
             setPositionHistory(positionsAfterReply);
             setMoveHistory(movesAfterReply);
             setCurrentMoveIndex(movesAfterReply.length - 1);
             setExpectedPvIndex(nextUserIndex);
             setIsPlayingLine(false);
-
-            if (nextUserIndex >= puzzle.pv.length) {
-              completePuzzle();
-            }
+            if (nextUserIndex >= puzzle.pv.length) completePuzzle();
           }, 450);
         } else {
           setStatus("wrong");
           setAttempts(prev => [...prev, { puzzleId: puzzle._id, result: "wrong" }]);
           setLastExpectedMoveSan(uciToSan(currentFen, expectedMove));
-
           setArrows([
             { from: sourceSquare, to: targetSquare, color: colors.arrowRed },
             { from: expectedMove.slice(0, 2), to: expectedMove.slice(2, 4), color: colors.arrowGreen },
@@ -570,22 +478,18 @@ const PuzzlesPage = () => {
     if (!puzzle) return "";
     return uciToSan(puzzle.fen, puzzle.bestmove);
   }, [puzzle]);
+
   const displayedBestMoveSan = lastExpectedMoveSan || bestMoveSan;
 
   const currentEval = useMemo(() => {
-    if (stableEngineEval) {
-      return stableEngineEval;
-    }
-    if (puzzle) {
-      return { score: puzzle.scorecp, mate: puzzle.mate !== 0 ? puzzle.mate : null };
-    }
+    if (stableEngineEval) return stableEngineEval;
+    if (puzzle) return { score: puzzle.scorecp, mate: puzzle.mate !== 0 ? puzzle.mate : null };
     return { score: 0, mate: null };
   }, [stableEngineEval, puzzle]);
 
   const formattedArrows = useMemo(() => {
     return arrows.map(a => ({ startSquare: a.from, endSquare: a.to, color: a.color }));
   }, [arrows]);
-
 
   if (isLoading) {
     return (
@@ -663,7 +567,6 @@ const PuzzlesPage = () => {
                   </div>
                 </div>
               </div>
-
               <div className="bg-[#302e2c] p-3 rounded mt-6 border border-[#3a3836]">
                 <div className="text-xs text-[#8b8987] mb-2">To get personalized puzzles:</div>
                 <button className="bg-[#5c60c8] hover:bg-[#6c70d8] text-white text-xs font-semibold py-1.5 px-4 rounded transition">REGISTER</button>
@@ -686,12 +589,9 @@ const PuzzlesPage = () => {
           {/* Middle: Board */}
           <div className="flex-1 flex flex-col items-center max-w-[700px]">
             <div className="flex w-full gap-2">
-              {/* Eval bar */}
               <div className="hidden sm:block w-4 sm:w-6 flex-shrink-0">
                 <EvalBar score={currentEval.score} mate={currentEval.mate} flipped={isFlipped} />
               </div>
-
-              {/* Chessboard Wrapper to prevent stretching */}
               <div className="flex-1 w-full flex flex-col">
                 <div className="w-full aspect-square relative">
                   <Chessboard
@@ -706,8 +606,6 @@ const PuzzlesPage = () => {
                     }}
                   />
                 </div>
-
-                {/* Navigation and Progress below board */}
                 <div className="mt-4 flex flex-col gap-2 w-full">
                   <div className="flex items-center justify-between bg-[#262421] rounded border border-[#3a3836] px-4 py-2">
                     <button
@@ -726,7 +624,6 @@ const PuzzlesPage = () => {
                       Next <span className="text-xl">»</span>
                     </button>
                   </div>
-
                   <div className="rounded overflow-hidden w-full border border-[#3a3836]">
                     <PuzzleProgress
                       attempts={attempts}
@@ -742,8 +639,6 @@ const PuzzlesPage = () => {
 
           {/* Right: Panel */}
           <div className="w-full lg:w-96 flex flex-col bg-[#262421] rounded overflow-hidden h-fit border border-[#3a3836]">
-
-            {/* Puzzle info */}
             <div className="px-4 py-3 bg-[#302e2c] border-b border-[#3a3836]">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -753,21 +648,16 @@ const PuzzlesPage = () => {
                     }`}>
                     {puzzle?.issuetype?.replace("_", " ")}
                   </span>
-                  <span className="text-sm text-[#8b8987]">
-                    Move {puzzle?.moveindex}
-                  </span>
+                  <span className="text-sm text-[#8b8987]">Move {puzzle?.moveindex}</span>
                 </div>
                 <a
                   href={`https://www.chess.com/game/live/${puzzle?.game_id}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs text-[#8b8987] hover:text-[#3893e8]"
-                >
+                  className="text-xs text-[#8b8987] hover:text-[#3893e8]">
                   View game →
                 </a>
               </div>
-
-              {/* Status */}
               <div className={`mt-2 text-lg font-semibold ${status === "correct" ? "text-[#629924]" :
                 status === "wrong" ? "text-[#cc3333]" :
                   status === "solution" ? "text-[#8b8987]" :
@@ -781,29 +671,19 @@ const PuzzlesPage = () => {
               </div>
             </div>
 
-            {/* Controls */}
             <div className="flex gap-2 px-4 py-3 border-b border-[#3a3836]">
               {status === "playing" ? (
                 <>
-                  <button
-                    onClick={handleGetHint}
-                    className="flex-1 py-2 px-3 text-sm bg-[#302e2c] hover:bg-[#3a3836] rounded transition"
-                  >
+                  <button onClick={handleGetHint} className="flex-1 py-2 px-3 text-sm bg-[#302e2c] hover:bg-[#3a3836] rounded transition">
                     💡 Hint
                   </button>
-                  <button
-                    onClick={handleViewSolution}
-                    className="flex-1 py-2 px-3 text-sm bg-[#302e2c] hover:bg-[#3a3836] rounded transition"
-                  >
+                  <button onClick={handleViewSolution} className="flex-1 py-2 px-3 text-sm bg-[#302e2c] hover:bg-[#3a3836] rounded transition">
                     📖 Solution
                   </button>
                 </>
               ) : (
                 <>
-                  <button
-                    onClick={handleRetry}
-                    className="flex-1 py-2 px-3 text-sm bg-[#302e2c] hover:bg-[#3a3836] rounded transition"
-                  >
+                  <button onClick={handleRetry} className="flex-1 py-2 px-3 text-sm bg-[#302e2c] hover:bg-[#3a3836] rounded transition">
                     ↺ Retry
                   </button>
                   <button
@@ -817,7 +697,6 @@ const PuzzlesPage = () => {
               )}
             </div>
 
-            {/* Move navigator */}
             <div className="border-b border-[#3a3836]">
               <MoveNavigator
                 moves={moveHistory}
@@ -827,7 +706,6 @@ const PuzzlesPage = () => {
               />
             </div>
 
-            {/* Engine lines */}
             <EngineLines
               lines={engineLines}
               isAnalyzing={isAnalyzing}
@@ -835,45 +713,37 @@ const PuzzlesPage = () => {
               enabled={showEngine}
               onToggle={() => setShowEngine(!showEngine)}
               onAnalyze={() => {
-                console.log("🖱️ Analyze button clicked!", { currentFen });
                 if (currentFen) {
-                  analyzePosition(currentFen, true);
-                } else {
-                  console.error("❌ No FEN to analyze!");
+                  queryClient.invalidateQueries({ queryKey: ["eval", currentFen] });
+                  analyzePosition(currentFen);
                 }
               }}
               onLineClick={(idx) => {
-                // Play just the first move of the engine line
                 if (isPlayingLine) return;
                 const line = engineLines[idx];
                 if (!line || !puzzle || !line.pv.length) return;
-
                 try {
                   const game = new Chess(currentFen);
-                  const uci = line.pv[0]; // Only first move
+                  const uci = line.pv[0];
                   const move = game.move({
                     from: uci.slice(0, 2) as Square,
                     to: uci.slice(2, 4) as Square,
                     promotion: uci.length > 4 ? uci[4] : undefined,
                   });
-
                   if (move) {
-                    // Update position with just the first move
                     const newFen = game.fen();
                     setPositionHistory(prev => [...prev.slice(0, currentMoveIndex + 2), newFen]);
                     setMoveHistory(prev => [...prev.slice(0, currentMoveIndex + 1), move.san]);
                     setCurrentMoveIndex(prev => prev + 1);
                   }
                 } catch {
-                  // Ignore invalid moves
+                  // ignore
                 }
               }}
             />
 
-            {/* Spacer */}
             <div className="flex-1" />
 
-            {/* Keyboard hints */}
             <div className="px-4 py-2 border-t border-[#3a3836] text-[10px] text-[#6e6c6a]">
               <span className="mr-3">←/→ moves</span>
               <span className="mr-3">↑/↓ puzzles</span>
@@ -883,8 +753,8 @@ const PuzzlesPage = () => {
           </div>
         </div>
       </div>
-    </div>
+    </div >
   );
 };
 
-export default PuzzlesPage;
+export default CustomEval;

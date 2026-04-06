@@ -340,14 +340,14 @@ func (ctrl *Controller) EvalPostion(c *fiber.Ctx) error {
 		})
 	}
 
-	evalCtx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	evalCtx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
 	defer cancel()
 
 	result, err := utils.Client.Evaluate(evalCtx, stockfish.EvalRequest{
-		FEN:   req.FEN,
-		Depth: 20,
-		// MoveTime: 300 * time.Millisecond,
-		MultiPV: 1,
+		FEN: req.FEN,
+		// Depth: 18,
+		MoveTime: 1500 * time.Millisecond,
+		MultiPV:  3,
 	})
 	if err != nil {
 

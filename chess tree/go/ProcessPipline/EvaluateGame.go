@@ -3,7 +3,6 @@ package Processpipline
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -49,18 +48,21 @@ const (
 )
 
 type Puzzle struct {
-	FEN         string
-	Solution    string
-	PV          []string
-	Category    PuzzleCategory
-	MateIn      int
-	IssueType   types.MoveIssueType
-	MultiPVGap  int
-	CPBefore    int
-	CPAfter     int
-	MoveIndex   int
-	PlayerColor string
-	SideToMove  string
+	FEN           string
+	Solution      string
+	PV            []string
+	Category      PuzzleCategory
+	MateIn        int
+	IssueType     types.MoveIssueType
+	MultiPVGap    int
+	CPBefore      int
+	CPAfter       int
+	MoveIndex     int
+	PlayerColor   string
+	SideToMove    string
+	Depth         int // puzzle depth (ply pairs walked in Layer 3)
+	MaterialStart int // material diff at puzzle start (player - opponent)
+	MaterialEnd   int // material diff at puzzle end (after full PV)
 }
 
 const (
@@ -76,30 +78,24 @@ const (
 
 	layerOneDecidedCPBound = 500
 	layerTwoMinGapCP       = 150
-	layerTwoMinWPGap       = 0.15
 	layerTwoCooldownMoves  = 4
 	forcedMateMaxDistance  = 4
 
 	// Layer 1 enhanced filtering thresholds
-	layerOneWinProbComfortMin = 0.25 // skip if WP below this (opponent winning comfortably)
-	layerOneWinProbComfortMax = 0.75 // skip if WP above this (player winning comfortably)
-	layerOneOpponentSwingCP   = 150  // min CP swing from opponent move to indicate blunder opportunity
-	layerOneMinCPDrop         = 80   // min CP drop for played move to be worth analyzing
-	layerOneMinWPDrop         = 0.08 // min WP drop for played move to be worth analyzing
-	layerOneAfterEvalDepth    = 10   // shallow depth for after-FEN quick check
+	layerOneComfortCPBound  = 400 // skip if |cp| > this (position already decided for one side)
+	layerOneOpponentSwingCP = 150 // min CP swing from opponent move to indicate blunder opportunity
+	layerOneMinCPDrop       = 80  // min CP drop for played move to be worth analyzing
+	layerOneAfterEvalDepth  = 10  // shallow depth for after-FEN quick check
+	layerOneMaterialAdvMax  = 3   // skip if player already up more than this in material
 
-	puzzleMistakeCPLoss = 100
-	puzzleBlunderCPLoss = 300
-
-	puzzleMistakeWinProbDrop = 0.10
-	puzzleBlunderWinProbDrop = 0.20
-	puzzleBlunderBeforeWP    = 0.45
-	puzzleBlunderAfterWP     = 0.35
-
-	puzzleLostAdvantageBeforeWP  = 0.72
-	puzzleLostAdvantageAfterWP   = 0.52
-	puzzleLostAdvantageMinDrop   = 0.16
+	puzzleMistakeCPLoss          = 100
+	puzzleBlunderCPLoss          = 300
 	puzzleLostAdvantageMinCPLoss = 120
+
+	// Layer 3 puzzle sequence walker thresholds
+	puzzleSequenceMinGap    = 50 // cp gap for forced opponent reply
+	puzzleSequenceMaxDepth  = 7  // max ply pairs to walk
+	puzzleMaterialLostLimit = 9  // material units — position moot if deficit exceeds this
 )
 
 var (
@@ -289,51 +285,32 @@ func scanCandidatesLayerOne(client *stockfish.Client, windows []evaluationWindow
 			continue
 		}
 
-		// 4: Skip if win probability is outside contested range (0.25 to 0.75)
-		// Position already comfortable for one side — missing best move rarely creates meaningful puzzle
-		beforeWP := getWinProb(beforeEval.ScoreCP, beforeEval.Mate, moveIsWhite)
-		if beforeWP < layerOneWinProbComfortMin || beforeWP > layerOneWinProbComfortMax {
+		// 4: Skip if position already too one-sided (|cp| > 400 from mover's perspective)
+		cpBeforeFromMoverPerspective, hasCPBefore := moverCentipawn(beforeEval.ScoreCP, moveIsWhite)
+		if hasCPBefore && abs(cpBeforeFromMoverPerspective) > layerOneComfortCPBound {
 			continue
 		}
 
-		// 5: Skip if no opponent opportunity created (opponent blunder signal)
-		// Compare eval between opponent's previous move and current position
-		// if window.PrevOpponentFen != "" {
-		// 	prevEval := evaluatePositionCached(client, window.PrevOpponentFen, layerOneEvalDepth, layerOneEvalMultiPV, 0)
-		// 	if isEvaluationAvailable(prevEval) {
-		// 		// Calculate CP swing from opponent's perspective to player's perspective
-		// 		// Opponent move turned the previous position into current position
-		// 		// A swing in player's favor indicates opponent blundered
-		// 		prevCP := scoreOrZero(prevEval.ScoreCP)
-		// 		currCP := scoreOrZero(beforeEval.ScoreCP)
-		// 		// Both scores are normalized to white's perspective
-		// 		// For white player: swing = curr - prev (positive = good for white)
-		// 		// For black player: swing = prev - curr (positive = good for black)
-		// 		var swing int
-		// 		if moveIsWhite {
-		// 			swing = currCP - prevCP
-		// 		} else {
-		// 			swing = prevCP - currCP
-		// 		}
-		// 		if swing < layerOneOpponentSwingCP {
-		// 			// No significant opportunity created by opponent — skip
-		// 			continue
-		// 		}
-		// 	}
-		// }
+		// 5: Skip if player already up material (not from disadvantage)
+		whiteM, blackM := materialCount(window.Snapshot.Fen)
+		var playerMat, opponentMat int
+		if moveIsWhite {
+			playerMat, opponentMat = whiteM, blackM
+		} else {
+			playerMat, opponentMat = blackM, whiteM
+		}
+		if playerMat-opponentMat > layerOneMaterialAdvMax {
+			continue
+		}
 
-		// 6: Skip if the move was fine enough (small damage)
-		// Do cheap depth 10 eval on after-FEN to measure actual damage
-		// afterEval := evaluatePositionCached(client, window.Snapshot.AfterFen, layerOneAfterEvalDepth, layerOneEvalMultiPV, 0)
-		// if isEvaluationAvailable(afterEval) {
-		// 	afterWP := getWinProb(afterEval.ScoreCP, afterEval.Mate, moveIsWhite)
-		// 	cpDrop, _ := centipawnLoss(beforeEval.ScoreCP, afterEval.ScoreCP, moveIsWhite)
-		// 	wpDrop := winProbDrop(beforeWP, afterWP)
-		// 	// If both CP drop and WP drop are small, move was fine enough
-		// 	if cpDrop < layerOneMinCPDrop && wpDrop < layerOneMinWPDrop {
-		// 		continue
-		// 	}
-		// }
+		// 6: Skip if the move was fine enough (small CP damage)
+		afterEval := evaluatePositionCached(client, window.Snapshot.AfterFen, layerOneAfterEvalDepth, layerOneEvalMultiPV, 0)
+		if isEvaluationAvailable(afterEval) {
+			cpDrop, hasDrop := centipawnLoss(beforeEval.ScoreCP, afterEval.ScoreCP, moveIsWhite)
+			if hasDrop && cpDrop < layerOneMinCPDrop {
+				continue
+			}
+		}
 
 		// All checks passed — add to candidates for Layer 2
 		candidates = append(candidates, layerOneCandidate{
@@ -364,7 +341,7 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 			continue
 		}
 
-		isForcedMate, mateIn := isForcedMatePuzzle(beforeEval, candidate.MoveIsWhite)
+		isForcedMate, mateIn, matingMoves := isForcedMatePuzzle(beforeEval, candidate.MoveIsWhite)
 		if !isForcedMate && !hasTacticalGap(beforeEval.Lines, candidate.MoveIsWhite, layerTwoMinGapCP) {
 			continue
 		}
@@ -374,12 +351,9 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 			continue
 		}
 
-		beforeWP := getWinProb(beforeEval.ScoreCP, beforeEval.Mate, candidate.MoveIsWhite)
-		afterWP := getWinProb(afterEval.ScoreCP, afterEval.Mate, candidate.MoveIsWhite)
 		cpDelta, _ := centipawnLoss(beforeEval.ScoreCP, afterEval.ScoreCP, candidate.MoveIsWhite)
-		winProbDelta := winProbDrop(beforeWP, afterWP)
 
-		category := puzzleCategoryForCandidate(isForcedMate, beforeWP, afterWP)
+		category := puzzleCategoryForCandidate(isForcedMate, cpDelta)
 		issueType := types.MoveIssueType("")
 		switch category {
 		case PuzzleCategoryForcedMate:
@@ -387,7 +361,7 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 		case PuzzleCategoryBlunder:
 			issueType = types.MoveIssueBlunder
 		default:
-			issueType = classifyIssue(beforeWP, afterWP, &beforeEval, &afterEval, candidate.MoveIsWhite)
+			issueType = classifyIssue(&beforeEval, &afterEval, candidate.MoveIsWhite)
 			if issueType == "" {
 				if cpDelta >= puzzleBlunderCPLoss {
 					issueType = types.MoveIssueBlunder
@@ -403,11 +377,50 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 		puzzle.CPAfter = scoreOrZero(afterEval.ScoreCP)
 		if category == PuzzleCategoryForcedMate {
 			puzzle.MateIn = mateIn
-			if len(beforeEval.Lines) > 0 && len(beforeEval.Lines[0].PV) > 0 {
-				puzzle.PV = append([]string(nil), beforeEval.Lines[0].PV...)
-				puzzle.Solution = normalizeUCIMove(beforeEval.Lines[0].PV[0])
+			for _, line := range beforeEval.Lines {
+				if len(line.PV) > 0 && normalizeUCIMove(line.PV[0]) == matingMoves[0] {
+					puzzle.PV = append([]string(nil), line.PV...)
+					puzzle.Solution = normalizeUCIMove(line.PV[0])
+					break
+				}
 			}
 		}
+
+		// Layer 3: Validate puzzle sequence with forced continuations
+		valid, trimmedPV, puzzleDepth, matStart, matEnd := walkPuzzleSequence(client, puzzle, candidate.MoveIsWhite)
+		if !valid {
+			// Still emit the MoveIssue, just skip the puzzle
+			issues = append(issues, types.MoveIssue{
+				MoveIndex:      candidate.Snapshot.MoveIndex,
+				MoveSAN:        candidate.Snapshot.MoveSAN,
+				MoveUCI:        candidate.Snapshot.MoveUCI,
+				Fen:            candidate.Snapshot.Fen,
+				SideToMove:     candidate.Snapshot.SideToMove,
+				PlayerColor:    candidate.Snapshot.PlayerColor,
+				UserColor:      userColor,
+				IssueType:      issueType,
+				PlayedBestMove: false,
+				BestMove:       beforeEval.BestMove,
+				Ponder:         beforeEval.Ponder,
+				PV:             append([]string(nil), beforeEval.PV...),
+				Depth:          beforeEval.Depth,
+				ScoreCP:        beforeEval.ScoreCP,
+				Mate:           beforeEval.Mate,
+				AfterScoreCP:   afterEval.ScoreCP,
+				AfterMate:      afterEval.Mate,
+				CPDelta:        cpDelta,
+			})
+			continue
+		}
+
+		puzzle.PV = trimmedPV
+		if len(trimmedPV) > 0 {
+			puzzle.Solution = trimmedPV[0]
+		}
+		puzzle.Depth = puzzleDepth
+		puzzle.MaterialStart = matStart
+		puzzle.MaterialEnd = matEnd
+
 		puzzles = append(puzzles, puzzle)
 		lastPuzzleMoveIndex = candidate.Snapshot.MoveIndex
 
@@ -429,10 +442,7 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 			Mate:           beforeEval.Mate,
 			AfterScoreCP:   afterEval.ScoreCP,
 			AfterMate:      afterEval.Mate,
-			WinProbBefore:  beforeWP,
-			WinProbAfter:   afterWP,
 			CPDelta:        cpDelta,
-			WinProbDelta:   winProbDelta,
 		})
 	}
 
@@ -528,36 +538,99 @@ func hasTacticalGap(lines []types.EvalLine, moverIsWhite bool, minGap int) bool 
 		return false
 	}
 
-	lineOneWP := evalLineWinProb(lineOne, moverIsWhite)
-	lineTwoWP := evalLineWinProb(lineTwo, moverIsWhite)
+	// Pure CP conditions only (removed WP gap condition)
 	conditionA := lineOneScore >= layerTwoMinGapCP
 	conditionB := gap >= minGap
-	conditionC := (lineOneWP - lineTwoWP) >= layerTwoMinWPGap
-	return conditionA && conditionB && conditionC
+	return conditionA && conditionB
 }
 
-func isForcedMatePuzzle(eval types.EvalResult, moverIsWhite bool) (bool, int) {
-	if eval.Mate == nil {
-		return false, 0
+func isForcedMatePuzzle(eval types.EvalResult, moverIsWhite bool) (bool, int, []string) {
+	// If no mate info and no lines have mate — return false
+	if eval.Mate == nil && len(eval.Lines) == 0 {
+		return false, 0, nil
 	}
-	state := mateStateForMover(eval.Mate, moverIsWhite)
-	if !state.ForcingMate || state.BeingMated || state.Distance > forcedMateMaxDistance {
-		return false, 0
+
+	// Scan all lines — collect every line where the mover is forcing mate
+	var matingLines []types.EvalLine
+	minMateDistance := int(^uint(0) >> 1) // max int
+
+	for _, line := range eval.Lines {
+		state := mateStateForMover(line.Mate, moverIsWhite)
+		if state.ForcingMate && !state.BeingMated {
+			matingLines = append(matingLines, line)
+			if state.Distance < minMateDistance {
+				minMateDistance = state.Distance
+			}
+		}
 	}
-	return true, state.Distance
+
+	// If no mating lines found, check eval.Mate as fallback
+	if len(matingLines) == 0 {
+		if eval.Mate == nil {
+			return false, 0, nil
+		}
+		state := mateStateForMover(eval.Mate, moverIsWhite)
+		if !state.ForcingMate || state.BeingMated || state.Distance > forcedMateMaxDistance {
+			return false, 0, nil
+		}
+		// Single mating line from eval.BestMove
+		if eval.BestMove != "" {
+			return true, state.Distance, []string{normalizeUCIMove(eval.BestMove)}
+		}
+		return false, 0, nil
+	}
+
+	// Filter to only lines where Distance == minMateDistance
+	var optimalLines []types.EvalLine
+	for _, line := range matingLines {
+		state := mateStateForMover(line.Mate, moverIsWhite)
+		if state.Distance == minMateDistance {
+			optimalLines = append(optimalLines, line)
+		}
+	}
+
+	// If minMateDistance > forcedMateMaxDistance — too deep, not a puzzle
+	if minMateDistance > forcedMateMaxDistance {
+		return false, 0, nil
+	}
+
+	// Collect the first move UCI from each of those lines
+	seen := make(map[string]bool)
+	var validMoves []string
+	for _, line := range optimalLines {
+		if len(line.PV) > 0 {
+			move := normalizeUCIMove(line.PV[0])
+			if move != "" && !seen[move] {
+				seen[move] = true
+				validMoves = append(validMoves, move)
+			}
+		}
+	}
+
+	// If no valid moves — return false
+	if len(validMoves) == 0 {
+		return false, 0, nil
+	}
+
+	// If multiple distinct first moves all lead to mate in same distance — ambiguous puzzle, discard
+	if len(validMoves) > 1 {
+		return false, 0, nil
+	}
+
+	// Exactly one unique mating first move
+	return true, minMateDistance, validMoves
 }
 
-func isBlunderPuzzle(beforeWP float64, afterWP float64) bool {
-	return beforeWP >= puzzleBlunderBeforeWP &&
-		afterWP <= puzzleBlunderAfterWP &&
-		winProbDrop(beforeWP, afterWP) >= puzzleBlunderWinProbDrop
+// isBlunderPuzzle determines if a puzzle represents a blunder based on CP loss
+func isBlunderPuzzle(cpDelta int) bool {
+	return cpDelta >= puzzleBlunderCPLoss
 }
 
-func puzzleCategoryForCandidate(isForcedMate bool, beforeWP float64, afterWP float64) PuzzleCategory {
+func puzzleCategoryForCandidate(isForcedMate bool, cpDelta int) PuzzleCategory {
 	if isForcedMate {
 		return PuzzleCategoryForcedMate
 	}
-	if isBlunderPuzzle(beforeWP, afterWP) {
+	if isBlunderPuzzle(cpDelta) {
 		return PuzzleCategoryBlunder
 	}
 	return PuzzleCategoryTactical
@@ -598,22 +671,6 @@ func evalLineScoreForMover(line types.EvalLine, moverIsWhite bool) (int, bool) {
 	return moverCentipawn(line.ScoreCP, moverIsWhite)
 }
 
-func evalLineWinProb(line types.EvalLine, moverIsWhite bool) float64 {
-	mateState := mateStateForMover(line.Mate, moverIsWhite)
-	if mateState.ForcingMate {
-		return 0.99
-	}
-	if mateState.BeingMated {
-		return 0.01
-	}
-
-	score, ok := evalLineScoreForMover(line, moverIsWhite)
-	if !ok {
-		return 0.5
-	}
-	return cpToWinProb(score)
-}
-
 func buildPuzzle(candidate layerOneCandidate, deepEval types.EvalResult) Puzzle {
 	gap, ok := multiPVTopGap(deepEval.Lines, candidate.MoveIsWhite)
 	if !ok {
@@ -636,6 +693,193 @@ func buildPuzzle(candidate layerOneCandidate, deepEval types.EvalResult) Puzzle 
 		PlayerColor: candidate.Snapshot.PlayerColor,
 		SideToMove:  candidate.Snapshot.SideToMove,
 	}
+}
+
+// walkPuzzleSequence validates a puzzle by checking forced continuations.
+// Returns (valid, trimmedPV, depth, materialStart, materialEnd).
+// - valid: true if puzzle has forced continuation(s) or strong L2 gap for 1-move puzzle
+// - trimmedPV: the validated principal variation
+// - depth: number of ply-pairs walked
+// - materialStart: material difference at puzzle start (player - opponent)
+// - materialEnd: material difference at puzzle end
+func walkPuzzleSequence(client *stockfish.Client, puzzle Puzzle, puzzleSideIsWhite bool) (bool, []string, int, int, int) {
+	if puzzle.Solution == "" {
+		return false, nil, 0, 0, 0
+	}
+
+	// Calculate material at puzzle start
+	whiteMatStart, blackMatStart := materialCount(puzzle.FEN)
+	var matStart int
+	if puzzleSideIsWhite {
+		matStart = whiteMatStart - blackMatStart
+	} else {
+		matStart = blackMatStart - whiteMatStart
+	}
+
+	// Create game from puzzle FEN and apply player's first move
+	fenOpt, err := lib.FEN(puzzle.FEN)
+	if err != nil {
+		return false, nil, 0, 0, 0
+	}
+	game := lib.NewGame(fenOpt)
+
+	// Apply player's solution move
+	playerMove, err := lib.UCINotation{}.Decode(game.Position(), puzzle.Solution)
+	if err != nil {
+		return false, nil, 0, 0, 0
+	}
+	if err := game.Move(playerMove, nil); err != nil {
+		return false, nil, 0, 0, 0
+	}
+	afterPlayerFEN := game.Position().String()
+
+	// Check material after player's move
+	whiteMatAfter, blackMatAfter := materialCount(afterPlayerFEN)
+	var playerMatAfter, opponentMatAfter int
+	if puzzleSideIsWhite {
+		playerMatAfter = whiteMatAfter
+		opponentMatAfter = blackMatAfter
+	} else {
+		playerMatAfter = blackMatAfter
+		opponentMatAfter = whiteMatAfter
+	}
+	matDeficit := opponentMatAfter - playerMatAfter
+	if matDeficit > puzzleMaterialLostLimit {
+		// Position is completely lost for puzzle side
+		return false, nil, 0, matStart, playerMatAfter - opponentMatAfter
+	}
+
+	// Eval position after player's first move with multiPV=3
+	afterPlayerEval := evaluatePositionCached(client, afterPlayerFEN, layerOneEvalDepth, layerTwoEvalMultiPV, 0)
+	if !isEvaluationAvailable(afterPlayerEval) {
+		return false, nil, 0, matStart, playerMatAfter - opponentMatAfter
+	}
+
+	// Check opponent reply uniqueness (from opponent's perspective)
+	opponentIsWhite := !puzzleSideIsWhite
+	replyGap, hasGap := multiPVTopGap(afterPlayerEval.Lines, opponentIsWhite)
+	if !hasGap || replyGap < puzzleSequenceMinGap {
+		// Opponent has multiple good replies — 1-move puzzle only
+		// Valid only if the solution itself had a big gap in L2
+		if puzzle.MultiPVGap >= layerTwoMinGapCP {
+			return true, []string{puzzle.Solution}, 1, matStart, playerMatAfter - opponentMatAfter
+		}
+		return false, nil, 0, matStart, playerMatAfter - opponentMatAfter
+	}
+
+	// Opponent reply is forced — extend the PV
+	collectedPV := []string{puzzle.Solution}
+	currentGame := game
+	currentFEN := afterPlayerFEN
+	depth := 1
+	currentMatDiff := playerMatAfter - opponentMatAfter
+
+	for depth < puzzleSequenceMaxDepth {
+		// Get opponent's forced reply
+		opponentBestMove := afterPlayerEval.BestMove
+		if opponentBestMove == "" && len(afterPlayerEval.Lines) > 0 && len(afterPlayerEval.Lines[0].PV) > 0 {
+			opponentBestMove = normalizeUCIMove(afterPlayerEval.Lines[0].PV[0])
+		}
+		if opponentBestMove == "" {
+			break
+		}
+
+		// Apply opponent's move
+		oppMove, err := lib.UCINotation{}.Decode(currentGame.Position(), opponentBestMove)
+		if err != nil {
+			break
+		}
+		if err := currentGame.Move(oppMove, nil); err != nil {
+			break
+		}
+		collectedPV = append(collectedPV, opponentBestMove)
+		afterOpponentFEN := currentGame.Position().String()
+
+		// Check material after opponent's reply
+		whiteMatOpp, blackMatOpp := materialCount(afterOpponentFEN)
+		if puzzleSideIsWhite {
+			currentMatDiff = whiteMatOpp - blackMatOpp
+		} else {
+			currentMatDiff = blackMatOpp - whiteMatOpp
+		}
+		if currentMatDiff < -puzzleMaterialLostLimit {
+			// Puzzle side is completely lost
+			return false, nil, 0, matStart, currentMatDiff
+		}
+
+		// Eval from player's perspective to find their next move
+		playerNextEval := evaluatePositionCached(client, afterOpponentFEN, layerOneEvalDepth, layerTwoEvalMultiPV, 0)
+		if !isEvaluationAvailable(playerNextEval) {
+			// Eval unavailable — return what we have so far
+			if len(collectedPV) >= 1 {
+				return true, collectedPV, depth, matStart, currentMatDiff
+			}
+			return false, nil, 0, matStart, currentMatDiff
+		}
+
+		// Check if player has a forced continuation
+		playerGap, hasPlayerGap := multiPVTopGap(playerNextEval.Lines, puzzleSideIsWhite)
+		if !hasPlayerGap || playerGap < puzzleSequenceMinGap {
+			// Player's next move is not forced — stop here
+			return true, collectedPV, depth, matStart, currentMatDiff
+		}
+
+		// Get player's forced move
+		playerBestMove := playerNextEval.BestMove
+		if playerBestMove == "" && len(playerNextEval.Lines) > 0 && len(playerNextEval.Lines[0].PV) > 0 {
+			playerBestMove = normalizeUCIMove(playerNextEval.Lines[0].PV[0])
+		}
+		if playerBestMove == "" {
+			break
+		}
+
+		// Apply player's move
+		pMove, err := lib.UCINotation{}.Decode(currentGame.Position(), playerBestMove)
+		if err != nil {
+			break
+		}
+		if err := currentGame.Move(pMove, nil); err != nil {
+			break
+		}
+		collectedPV = append(collectedPV, playerBestMove)
+		currentFEN = currentGame.Position().String()
+		depth++
+
+		// Update material
+		whiteMatP, blackMatP := materialCount(currentFEN)
+		if puzzleSideIsWhite {
+			currentMatDiff = whiteMatP - blackMatP
+		} else {
+			currentMatDiff = blackMatP - whiteMatP
+		}
+
+		// Check if puzzle side is now lost
+		if currentMatDiff < -puzzleMaterialLostLimit {
+			return false, nil, 0, matStart, currentMatDiff
+		}
+
+		// Eval for next opponent reply
+		afterPlayerEval = evaluatePositionCached(client, currentFEN, layerOneEvalDepth, layerTwoEvalMultiPV, 0)
+		if !isEvaluationAvailable(afterPlayerEval) {
+			if len(collectedPV) >= 1 {
+				return true, collectedPV, depth, matStart, currentMatDiff
+			}
+			return false, nil, 0, matStart, currentMatDiff
+		}
+
+		// Check opponent reply uniqueness again
+		replyGap, hasGap = multiPVTopGap(afterPlayerEval.Lines, opponentIsWhite)
+		if !hasGap || replyGap < puzzleSequenceMinGap {
+			// Opponent has multiple good replies — stop extending
+			return true, collectedPV, depth, matStart, currentMatDiff
+		}
+	}
+
+	// Reached max depth or loop ended
+	if len(collectedPV) >= 1 {
+		return true, collectedPV, depth, matStart, currentMatDiff
+	}
+	return false, nil, 0, matStart, currentMatDiff
 }
 
 func scoreOrZero(scoreCP *int) int {
@@ -769,19 +1013,16 @@ func DiffEval(snapshots []moveSnapshot, evals []types.EvalResult, userIsWhite bo
 		afterEval := evals[idx+1]
 		moveIsWhite := snapshot.SideToMove == "w"
 
-		beforeWP := getWinProb(beforeEval.ScoreCP, beforeEval.Mate, moveIsWhite)
-		afterWP := getWinProb(afterEval.ScoreCP, afterEval.Mate, moveIsWhite)
 		playedBestMove := sameUCIMove(snapshot.MoveUCI, beforeEval.BestMove)
 		if playedBestMove {
 			continue
 		}
 
-		issueType := classifyIssue(beforeWP, afterWP, &beforeEval, &afterEval, moveIsWhite)
+		issueType := classifyIssue(&beforeEval, &afterEval, moveIsWhite)
 		if issueType == "" {
 			continue
 		}
 		cpDelta, _ := centipawnLoss(beforeEval.ScoreCP, afterEval.ScoreCP, moveIsWhite)
-		winProbDelta := winProbDrop(beforeWP, afterWP)
 
 		issues = append(issues, types.MoveIssue{
 			MoveIndex:      snapshot.MoveIndex,
@@ -801,17 +1042,14 @@ func DiffEval(snapshots []moveSnapshot, evals []types.EvalResult, userIsWhite bo
 			Mate:           beforeEval.Mate,
 			AfterScoreCP:   afterEval.ScoreCP,
 			AfterMate:      afterEval.Mate,
-			WinProbBefore:  beforeWP,
-			WinProbAfter:   afterWP,
 			CPDelta:        cpDelta,
-			WinProbDelta:   winProbDelta,
 		})
 	}
 
 	return issues
 }
 
-func classifyIssue(prevWP float64, curWP float64, prevEval *types.EvalResult, curEval *types.EvalResult, moveIsWhite bool) types.MoveIssueType {
+func classifyIssue(prevEval *types.EvalResult, curEval *types.EvalResult, moveIsWhite bool) types.MoveIssueType {
 	beforeMateState := mateStateForMover(prevEval.Mate, moveIsWhite)
 	afterMateState := mateStateForMover(curEval.Mate, moveIsWhite)
 
@@ -822,44 +1060,40 @@ func classifyIssue(prevWP float64, curWP float64, prevEval *types.EvalResult, cu
 		return ""
 	}
 
-	dropWP := winProbDrop(prevWP, curWP)
 	cpLoss, hasCPLoss := centipawnLoss(prevEval.ScoreCP, curEval.ScoreCP, moveIsWhite)
-	if isBlunder(dropWP, cpLoss, hasCPLoss) {
+	if isBlunder(cpLoss, hasCPLoss) {
 		return types.MoveIssueBlunder
 	}
-	if isLostAdvantage(prevWP, curWP, dropWP, cpLoss, hasCPLoss) {
+	if isLostAdvantage(prevEval.ScoreCP, curEval.ScoreCP, cpLoss, hasCPLoss, moveIsWhite) {
 		return types.MoveIssueLostAdvantage
 	}
-	if isMistake(dropWP, cpLoss, hasCPLoss) {
+	if isMistake(cpLoss, hasCPLoss) {
 		return types.MoveIssueMistake
 	}
 
 	return ""
 }
 
-func isBlunder(dropWP float64, cpLoss int, hasCPLoss bool) bool {
-	return hasCPLoss && dropWP >= puzzleBlunderWinProbDrop && cpLoss >= puzzleBlunderCPLoss
+func isBlunder(cpLoss int, hasCPLoss bool) bool {
+	return hasCPLoss && cpLoss >= puzzleBlunderCPLoss
 }
 
-func isMistake(dropWP float64, cpLoss int, hasCPLoss bool) bool {
-	return hasCPLoss && dropWP >= puzzleMistakeWinProbDrop && cpLoss >= puzzleMistakeCPLoss
+func isMistake(cpLoss int, hasCPLoss bool) bool {
+	return hasCPLoss && cpLoss >= puzzleMistakeCPLoss
 }
 
-func isLostAdvantage(prevWP float64, curWP float64, dropWP float64, cpLoss int, hasCPLoss bool) bool {
-	if prevWP < puzzleLostAdvantageBeforeWP || curWP > puzzleLostAdvantageAfterWP || dropWP < puzzleLostAdvantageMinDrop {
+func isLostAdvantage(prevScoreCP *int, curScoreCP *int, cpLoss int, hasCPLoss bool, moveIsWhite bool) bool {
+	if !hasCPLoss || cpLoss < puzzleLostAdvantageMinCPLoss {
 		return false
 	}
-	if hasCPLoss && cpLoss < puzzleLostAdvantageMinCPLoss {
+	// Lost advantage: player had winning position (high CP) but now it's closer to equal/lost
+	prevCP, okPrev := moverCentipawn(prevScoreCP, moveIsWhite)
+	curCP, okCur := moverCentipawn(curScoreCP, moveIsWhite)
+	if !okPrev || !okCur {
 		return false
 	}
-	return true
-}
-
-func winProbDrop(prevWP float64, curWP float64) float64 {
-	if curWP >= prevWP {
-		return 0
-	}
-	return prevWP - curWP
+	// Had clear advantage (>= 150cp) and dropped to near-equal or worse
+	return prevCP >= 150 && curCP < 100
 }
 
 func moverCentipawn(scoreCP *int, moverIsWhite bool) (int, bool) {
@@ -987,45 +1221,40 @@ func normalizeToWhitePerspective(fen string, scoreCP *int, mate *int) (*int, *in
 	return normalizedScore, normalizedMate
 }
 
-func getWinProb(scoreCP *int, mate *int, moverIsWhite bool) float64 {
-	if mate != nil {
-		m := *mate
-		if !moverIsWhite {
-			m = -m
-		}
-		return mateToWinProb(m)
-	}
-
-	if scoreCP != nil {
-		cp := *scoreCP
-		if !moverIsWhite {
-			cp = -cp
-		}
-		return cpToWinProb(cp)
-	}
-
-	return 0.5
-}
-
-func mateToWinProb(mate int) float64 {
-	if mate > 0 {
-		return 1.0 - 0.0001*float64(abs(mate))
-	}
-	if mate < 0 {
-		return 0.0001 * float64(abs(mate))
-	}
-	return 0.5
-}
-
-func cpToWinProb(cp int) float64 {
-	const scale = 271.43
-	x := float64(cp) / scale
-	return 1.0 / (1.0 + math.Exp(-x))
-}
-
 func abs(num int) int {
 	if num < 0 {
 		return -num
 	}
 	return num
+}
+
+// materialCount calculates material count for white and black from a FEN string.
+// Returns (whiteMaterial, blackMaterial) using standard piece values:
+// Pawn=1, Knight/Bishop=3, Rook=5, Queen=9
+func materialCount(fen string) (int, int) {
+	white := 0
+	black := 0
+	board := strings.SplitN(fen, " ", 2)[0]
+
+	for _, ch := range board {
+		switch ch {
+		case 'P':
+			white = white + 1
+		case 'Q':
+			white = white + 9
+		case 'N', 'B':
+			white = white + 3
+		case 'R':
+			white = white + 5
+		case 'p':
+			black = black + 1
+		case 'q':
+			black = black + 9
+		case 'n', 'b':
+			black = black + 3
+		case 'r':
+			black = black + 5
+		}
+	}
+	return white, black
 }

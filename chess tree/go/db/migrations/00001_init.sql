@@ -58,8 +58,6 @@ CREATE TABLE Issues(
 );
 
 -- +goose Down
--- Add your DROP TABLE statements here.
-
 
 DROP TABLE IF EXISTS Issues;
 DROP TABLE IF EXISTS Games;

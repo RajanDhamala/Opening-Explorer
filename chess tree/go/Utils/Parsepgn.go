@@ -1,7 +1,9 @@
 package utils
 
 import (
+	"fmt"
 	"strings"
+
 	// "encoding/json"
 	// demo "github.com/notnil/chess"
 	"chess/ProcessPipline"
@@ -202,4 +204,33 @@ func EvaluateAllGames(allgames *types.UserGames, username string) []types.EvalGa
 	}
 
 	return evalGames
+}
+
+func MaterialCount(fen string) (int, int) {
+	white := 0
+	black := 0
+	fmt.Println("we got the posion:", fen)
+	board := strings.SplitN(fen, " ", 2)[0]
+
+	for _, ch := range board {
+		switch ch {
+		case 'P':
+			white = white + 1
+		case 'Q':
+			white = white + 9
+		case 'N', 'B':
+			white = white + 3
+		case 'R':
+			white = white + 5
+		case 'p':
+			black = black + 1
+		case 'q':
+			black = black + 9
+		case 'n', 'b':
+			black = black + 3
+		case 'r':
+			black = black + 5
+		}
+	}
+	return white, black
 }
