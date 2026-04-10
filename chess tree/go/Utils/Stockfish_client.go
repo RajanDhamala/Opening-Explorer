@@ -12,7 +12,7 @@ var Client *stockfish.Client
 
 func ConnectStockfish() (*stockfish.Client, error) {
 	client, err := stockfish.New(context.Background(), stockfish.Config{
-		PoolSize:         8,
+		PoolSize:         4,
 		QueueSize:        16,
 		PerEngineThreads: 1,
 		TotalHashMB:      256,

@@ -3,6 +3,7 @@ package Processpipline
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -54,7 +55,7 @@ type Puzzle struct {
 	Category      PuzzleCategory
 	MateIn        int
 	IssueType     types.MoveIssueType
-	MultiPVGap    int
+	MultiPVGap    float64
 	CPBefore      int
 	CPAfter       int
 	MoveIndex     int
@@ -93,9 +94,13 @@ const (
 	puzzleLostAdvantageMinCPLoss = 120
 
 	// Layer 3 puzzle sequence walker thresholds
-	puzzleSequenceMinGap    = 50 // cp gap for forced opponent reply
-	puzzleSequenceMaxDepth  = 7  // max ply pairs to walk
-	puzzleMaterialLostLimit = 9  // material units — position moot if deficit exceeds this
+	puzzleSequenceMinGap           = 50  // cp gap for forced opponent reply
+	puzzleSequenceMinWinChancesGap = 5.0 // winning-chances gap (percentage points) for forced move checks; tune as needed
+	// Guardrails to stop extending PVs in already-decided positions.
+	puzzleSequenceDecisiveWinChances = 80.0 // both lines at/above this (or symmetrically low) are treated as same-outcome
+	puzzleSequenceComfortWinChances  = 70.0 // if second line remains this high in a decisive spot, continuation is not forced
+	puzzleSequenceMaxDepth           = 7    // max ply pairs to walk
+	puzzleMaterialLostLimit          = 9    // material units — position moot if deficit exceeds this
 )
 
 var (
@@ -385,6 +390,10 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 				}
 			}
 		}
+		persistedPV := []string{}
+		if category == PuzzleCategoryForcedMate {
+			persistedPV = append([]string(nil), puzzle.PV...)
+		}
 
 		// Layer 3: Validate puzzle sequence with forced continuations
 		valid, trimmedPV, puzzleDepth, matStart, matEnd := walkPuzzleSequence(client, puzzle, candidate.MoveIsWhite)
@@ -402,7 +411,7 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 				PlayedBestMove: false,
 				BestMove:       beforeEval.BestMove,
 				Ponder:         beforeEval.Ponder,
-				PV:             append([]string(nil), beforeEval.PV...),
+				PV:             append([]string(nil), persistedPV...),
 				Depth:          beforeEval.Depth,
 				ScoreCP:        beforeEval.ScoreCP,
 				Mate:           beforeEval.Mate,
@@ -413,9 +422,20 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 			continue
 		}
 
-		puzzle.PV = trimmedPV
-		if len(trimmedPV) > 0 {
-			puzzle.Solution = trimmedPV[0]
+		if category == PuzzleCategoryForcedMate {
+			if len(puzzle.PV) == 0 {
+				puzzle.PV = append([]string(nil), trimmedPV...)
+				if len(trimmedPV) > 0 {
+					puzzle.Solution = trimmedPV[0]
+				}
+			}
+			persistedPV = append([]string(nil), puzzle.PV...)
+		} else {
+			puzzle.PV = append([]string(nil), trimmedPV...)
+			if len(trimmedPV) > 0 {
+				puzzle.Solution = trimmedPV[0]
+			}
+			persistedPV = append([]string(nil), trimmedPV...)
 		}
 		puzzle.Depth = puzzleDepth
 		puzzle.MaterialStart = matStart
@@ -436,7 +456,7 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 			PlayedBestMove: false,
 			BestMove:       beforeEval.BestMove,
 			Ponder:         beforeEval.Ponder,
-			PV:             append([]string(nil), beforeEval.PV...),
+			PV:             append([]string(nil), persistedPV...),
 			Depth:          beforeEval.Depth,
 			ScoreCP:        beforeEval.ScoreCP,
 			Mate:           beforeEval.Mate,
@@ -529,18 +549,15 @@ func hasTacticalGap(lines []types.EvalLine, moverIsWhite bool, minGap int) bool 
 		return true
 	}
 
-	gap, ok := multiPVTopGap(lines, moverIsWhite)
-	if !ok {
-		return false
-	}
 	lineOneScore, okOne := evalLineScoreForMover(lineOne, moverIsWhite)
 	if !okOne {
 		return false
 	}
 
-	// Pure CP conditions only (removed WP gap condition)
+	forcedGap, hasForcedGap := forcedMoveWinChancesGap(lines, moverIsWhite)
 	conditionA := lineOneScore >= layerTwoMinGapCP
-	conditionB := gap >= minGap
+	conditionB := hasForcedGap && forcedGap >= puzzleSequenceMinWinChancesGap
+	_ = minGap
 	return conditionA && conditionB
 }
 
@@ -652,6 +669,100 @@ func multiPVTopGap(lines []types.EvalLine, moverIsWhite bool) (int, bool) {
 	return topScore - secondScore, true
 }
 
+func winChances(cp int) float64 {
+	return 50 + 50*(2/(1+math.Exp(-0.00368208*float64(cp)))-1)
+}
+
+func winChancesForLine(line types.EvalLine, moverIsWhite bool) (float64, bool) {
+	if line.Mate != nil {
+		moverMate := *line.Mate
+		if !moverIsWhite {
+			moverMate = -moverMate
+		}
+		if moverMate > 0 {
+			return 100.0, true
+		}
+		if moverMate < 0 {
+			return 0.0, true
+		}
+	}
+
+	cp, ok := moverCentipawn(line.ScoreCP, moverIsWhite)
+	if !ok {
+		return 0, false
+	}
+	return winChances(cp), true
+}
+
+func winChancesGap(lines []types.EvalLine, moverIsWhite bool) (float64, bool) {
+	if len(lines) < 2 {
+		return 0, false
+	}
+	topWC, okTop := winChancesForLine(lines[0], moverIsWhite)
+	secondWC, okSecond := winChancesForLine(lines[1], moverIsWhite)
+	if !okTop || !okSecond {
+		return 0, false
+	}
+	return topWC - secondWC, true
+}
+
+func topTwoWinChances(lines []types.EvalLine, moverIsWhite bool) (float64, float64, bool) {
+	if len(lines) < 2 {
+		return 0, 0, false
+	}
+	topWC, okTop := winChancesForLine(lines[0], moverIsWhite)
+	secondWC, okSecond := winChancesForLine(lines[1], moverIsWhite)
+	if !okTop || !okSecond {
+		return 0, 0, false
+	}
+	return topWC, secondWC, true
+}
+
+func isDecisiveSameOutcomeByWinChances(topWC float64, secondWC float64) bool {
+	decisiveLoss := 100.0 - puzzleSequenceDecisiveWinChances
+	if topWC >= puzzleSequenceDecisiveWinChances && secondWC >= puzzleSequenceDecisiveWinChances {
+		return true
+	}
+	return topWC <= decisiveLoss && secondWC <= decisiveLoss
+}
+
+func secondLineKeepsComfortableOutcome(topWC float64, secondWC float64) bool {
+	decisiveLoss := 100.0 - puzzleSequenceDecisiveWinChances
+	comfortLoss := 100.0 - puzzleSequenceComfortWinChances
+	if topWC >= puzzleSequenceDecisiveWinChances && secondWC >= puzzleSequenceComfortWinChances {
+		return true
+	}
+	return topWC <= decisiveLoss && secondWC <= comfortLoss
+}
+
+func forcedMoveWinChancesGap(lines []types.EvalLine, moverIsWhite bool) (float64, bool) {
+	if len(lines) < 2 {
+		return 0, false
+	}
+
+	// Mate lines are always forced for continuation purposes.
+	lineOneState := mateStateForMover(lines[0].Mate, moverIsWhite)
+	if lineOneState.ForcingMate {
+		return 100.0, true
+	}
+
+	topWC, secondWC, ok := topTwoWinChances(lines, moverIsWhite)
+	if !ok {
+		return 0, false
+	}
+	gap := topWC - secondWC
+	if gap < puzzleSequenceMinWinChancesGap {
+		return gap, false
+	}
+	if isDecisiveSameOutcomeByWinChances(topWC, secondWC) {
+		return gap, false
+	}
+	if secondLineKeepsComfortableOutcome(topWC, secondWC) {
+		return gap, false
+	}
+	return gap, true
+}
+
 func evalLineScoreForMover(line types.EvalLine, moverIsWhite bool) (int, bool) {
 	if line.Mate != nil {
 		const mateEquivalentCP = 100000
@@ -672,9 +783,9 @@ func evalLineScoreForMover(line types.EvalLine, moverIsWhite bool) (int, bool) {
 }
 
 func buildPuzzle(candidate layerOneCandidate, deepEval types.EvalResult) Puzzle {
-	gap, ok := multiPVTopGap(deepEval.Lines, candidate.MoveIsWhite)
+	gap, ok := forcedMoveWinChancesGap(deepEval.Lines, candidate.MoveIsWhite)
 	if !ok {
-		gap = 0
+		gap = 0.0
 	}
 
 	solution := deepEval.BestMove
@@ -757,11 +868,11 @@ func walkPuzzleSequence(client *stockfish.Client, puzzle Puzzle, puzzleSideIsWhi
 
 	// Check opponent reply uniqueness (from opponent's perspective)
 	opponentIsWhite := !puzzleSideIsWhite
-	replyGap, hasGap := multiPVTopGap(afterPlayerEval.Lines, opponentIsWhite)
-	if !hasGap || replyGap < puzzleSequenceMinGap {
+	replyGap, hasGap := forcedMoveWinChancesGap(afterPlayerEval.Lines, opponentIsWhite)
+	if !hasGap || replyGap < puzzleSequenceMinWinChancesGap {
 		// Opponent has multiple good replies — 1-move puzzle only
 		// Valid only if the solution itself had a big gap in L2
-		if puzzle.MultiPVGap >= layerTwoMinGapCP {
+		if puzzle.MultiPVGap >= puzzleSequenceMinWinChancesGap {
 			return true, []string{puzzle.Solution}, 1, matStart, playerMatAfter - opponentMatAfter
 		}
 		return false, nil, 0, matStart, playerMatAfter - opponentMatAfter
@@ -818,8 +929,8 @@ func walkPuzzleSequence(client *stockfish.Client, puzzle Puzzle, puzzleSideIsWhi
 		}
 
 		// Check if player has a forced continuation
-		playerGap, hasPlayerGap := multiPVTopGap(playerNextEval.Lines, puzzleSideIsWhite)
-		if !hasPlayerGap || playerGap < puzzleSequenceMinGap {
+		playerGap, hasPlayerGap := forcedMoveWinChancesGap(playerNextEval.Lines, puzzleSideIsWhite)
+		if !hasPlayerGap || playerGap < puzzleSequenceMinWinChancesGap {
 			// Player's next move is not forced — stop here
 			return true, collectedPV, depth, matStart, currentMatDiff
 		}
@@ -868,8 +979,8 @@ func walkPuzzleSequence(client *stockfish.Client, puzzle Puzzle, puzzleSideIsWhi
 		}
 
 		// Check opponent reply uniqueness again
-		replyGap, hasGap = multiPVTopGap(afterPlayerEval.Lines, opponentIsWhite)
-		if !hasGap || replyGap < puzzleSequenceMinGap {
+		replyGap, hasGap = forcedMoveWinChancesGap(afterPlayerEval.Lines, opponentIsWhite)
+		if !hasGap || replyGap < puzzleSequenceMinWinChancesGap {
 			// Opponent has multiple good replies — stop extending
 			return true, collectedPV, depth, matStart, currentMatDiff
 		}

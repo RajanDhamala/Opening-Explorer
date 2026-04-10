@@ -345,7 +345,7 @@ func (ctrl *Controller) EvalPostion(c *fiber.Ctx) error {
 
 	result, err := utils.Client.Evaluate(evalCtx, stockfish.EvalRequest{
 		FEN: req.FEN,
-		// Depth: 18,
+		// Depth: 17,
 		MoveTime: 1500 * time.Millisecond,
 		MultiPV:  3,
 	})
