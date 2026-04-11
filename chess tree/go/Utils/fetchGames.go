@@ -41,7 +41,7 @@ func FetchProcess(username string) (*types.UserGames, error) {
 	if len(igotdata.Data.Archives) == 0 {
 		return nil, errors.New("no archives found")
 	}
-	url := igotdata.Data.Archives[len(igotdata.Data.Archives)-4]
+	url := igotdata.Data.Archives[len(igotdata.Data.Archives)-2]
 	parts := strings.Split(url, "/")
 	timeframe := types.Timeline{
 		Year:  parts[len(parts)-2],

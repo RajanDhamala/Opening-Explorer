@@ -66,6 +66,11 @@ type Puzzle struct {
 	MaterialEnd   int // material diff at puzzle end (after full PV)
 }
 
+type puzzleSequenceStep struct {
+	Move      string
+	HasSecond bool
+}
+
 const (
 	defaultSkipInitialPlies    = 10
 	defaultMaxUserMovesPerGame = 80
@@ -77,15 +82,17 @@ const (
 	layerTwoEvalMultiPV = 3
 	layerTwoMoveTime    = 800 * time.Millisecond
 
-	layerOneDecidedCPBound = 500
-	layerTwoMinGapCP       = 150
-	layerTwoCooldownMoves  = 4
-	forcedMateMaxDistance  = 4
+	layerOneDecidedCPBound   = 500
+	layerTwoMinGapCP         = 200
+	layerTwoMinWinChancesGap = 12.0
+	layerTwoCooldownMoves    = 6
+	forcedMateMinDistance    = 1
+	forcedMateMaxDistance    = 4
 
 	// Layer 1 enhanced filtering thresholds
 	layerOneComfortCPBound  = 400 // skip if |cp| > this (position already decided for one side)
 	layerOneOpponentSwingCP = 150 // min CP swing from opponent move to indicate blunder opportunity
-	layerOneMinCPDrop       = 80  // min CP drop for played move to be worth analyzing
+	layerOneMinCPDrop       = 150 // min CP drop for played move to be worth analyzing
 	layerOneAfterEvalDepth  = 10  // shallow depth for after-FEN quick check
 	layerOneMaterialAdvMax  = 3   // skip if player already up more than this in material
 
@@ -94,8 +101,12 @@ const (
 	puzzleLostAdvantageMinCPLoss = 120
 
 	// Layer 3 puzzle sequence walker thresholds
-	puzzleSequenceMinGap           = 50  // cp gap for forced opponent reply
-	puzzleSequenceMinWinChancesGap = 5.0 // winning-chances gap (percentage points) for forced move checks; tune as needed
+	puzzleSequenceMinGap                     = 50 // cp gap for forced opponent reply
+	puzzleSequenceMinWinChancesGap           = 12.0
+	puzzleSequenceForcingGapWC               = 12.0
+	puzzleSequenceSingleMoveMinWinChancesGap = 70.0
+	puzzleSequenceMinAdvantageCP             = 200
+	puzzleSequenceMinNonMateLength           = 2
 	// Guardrails to stop extending PVs in already-decided positions.
 	puzzleSequenceDecisiveWinChances = 80.0 // both lines at/above this (or symmetrically low) are treated as same-outcome
 	puzzleSequenceComfortWinChances  = 70.0 // if second line remains this high in a decisive spot, continuation is not forced
@@ -127,6 +138,65 @@ func PlayGame(moves []types.Move, client *stockfish.Client, isWhite bool) ([]typ
 	return evaluateWindows(client, windows, isWhite)
 }
 
+func buildEvalGameResult(item types.EvalGameInput, issues []types.MoveIssue) types.EvalGameResult {
+	return types.EvalGameResult{
+		GameID:         item.GameID,
+		GameURL:        item.GameURL,
+		WhiteUsername:  item.WhiteUsername,
+		BlackUsername:  item.BlackUsername,
+		WhiteRating:    item.WhiteRating,
+		BlackRating:    item.BlackRating,
+		OpponentName:   item.OpponentName,
+		OpponentRating: item.OpponentRating,
+		PlayerColor:    item.PlayerColor,
+		TimeClass:      item.TimeClass,
+		Result:         item.Result,
+		IssueCount:     len(issues),
+		Issues:         issues,
+	}
+}
+
+func PlayGamesStream(games []types.EvalGameInput, client *stockfish.Client) <-chan types.EvalGameResult {
+	results := make(chan types.EvalGameResult, defaultGameWorkers)
+
+	go func() {
+		defer close(results)
+
+		if client == nil || len(games) == 0 {
+			return
+		}
+
+		total := len(games)
+		workers := min(defaultGameWorkers, total)
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, workers)
+		var processed int32
+
+		for _, game := range games {
+			item := game
+			wg.Add(1)
+			sem <- struct{}{}
+
+			go func() {
+				defer func() {
+					wg.Done()
+					<-sem
+				}()
+
+				issues, _ := PlayGame(item.Moves, client, item.IsWhite)
+				result := buildEvalGameResult(item, issues)
+				done := atomic.AddInt32(&processed, 1)
+				fmt.Printf("[eval] processed %d/%d games (id=%s, issues=%d)\n", done, total, gameIDForLog(item.GameID), len(issues))
+				results <- result
+			}()
+		}
+
+		wg.Wait()
+	}()
+
+	return results
+}
+
 func PlayGames(games []types.EvalGameInput, client *stockfish.Client) []types.EvalGameResult {
 	if client == nil || len(games) == 0 {
 		return nil
@@ -151,21 +221,7 @@ func PlayGames(games []types.EvalGameInput, client *stockfish.Client) []types.Ev
 			}()
 
 			issues, _ := PlayGame(item.Moves, client, item.IsWhite)
-			results[idx] = types.EvalGameResult{
-				GameID:         item.GameID,
-				GameURL:        item.GameURL,
-				WhiteUsername:  item.WhiteUsername,
-				BlackUsername:  item.BlackUsername,
-				WhiteRating:    item.WhiteRating,
-				BlackRating:    item.BlackRating,
-				OpponentName:   item.OpponentName,
-				OpponentRating: item.OpponentRating,
-				PlayerColor:    item.PlayerColor,
-				TimeClass:      item.TimeClass,
-				Result:         item.Result,
-				IssueCount:     len(issues),
-				Issues:         issues,
-			}
+			results[idx] = buildEvalGameResult(item, issues)
 
 			done := atomic.AddInt32(&processed, 1)
 			fmt.Printf("[eval] processed %d/%d games (id=%s, issues=%d)\n", done, total, gameIDForLog(item.GameID), len(issues))
@@ -390,10 +446,8 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 				}
 			}
 		}
-		persistedPV := []string{}
-		if category == PuzzleCategoryForcedMate {
-			persistedPV = append([]string(nil), puzzle.PV...)
-		}
+		persistedPV := fallbackIssuePV(puzzle, beforeEval)
+		persistedSolution := []string{}
 
 		// Layer 3: Validate puzzle sequence with forced continuations
 		valid, trimmedPV, puzzleDepth, matStart, matEnd := walkPuzzleSequence(client, puzzle, candidate.MoveIsWhite)
@@ -412,6 +466,7 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 				BestMove:       beforeEval.BestMove,
 				Ponder:         beforeEval.Ponder,
 				PV:             append([]string(nil), persistedPV...),
+				Solution:       append([]string(nil), persistedSolution...),
 				Depth:          beforeEval.Depth,
 				ScoreCP:        beforeEval.ScoreCP,
 				Mate:           beforeEval.Mate,
@@ -422,21 +477,12 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 			continue
 		}
 
-		if category == PuzzleCategoryForcedMate {
-			if len(puzzle.PV) == 0 {
-				puzzle.PV = append([]string(nil), trimmedPV...)
-				if len(trimmedPV) > 0 {
-					puzzle.Solution = trimmedPV[0]
-				}
-			}
-			persistedPV = append([]string(nil), puzzle.PV...)
-		} else {
-			puzzle.PV = append([]string(nil), trimmedPV...)
-			if len(trimmedPV) > 0 {
-				puzzle.Solution = trimmedPV[0]
-			}
-			persistedPV = append([]string(nil), trimmedPV...)
+		puzzle.PV = append([]string(nil), trimmedPV...)
+		if len(trimmedPV) > 0 {
+			puzzle.Solution = trimmedPV[0]
 		}
+		persistedSolution = normalizePVForStorage(trimmedPV)
+		persistedPV = append([]string(nil), persistedSolution...)
 		puzzle.Depth = puzzleDepth
 		puzzle.MaterialStart = matStart
 		puzzle.MaterialEnd = matEnd
@@ -457,6 +503,7 @@ func confirmTacticsLayerTwo(client *stockfish.Client, candidates []layerOneCandi
 			BestMove:       beforeEval.BestMove,
 			Ponder:         beforeEval.Ponder,
 			PV:             append([]string(nil), persistedPV...),
+			Solution:       append([]string(nil), persistedSolution...),
 			Depth:          beforeEval.Depth,
 			ScoreCP:        beforeEval.ScoreCP,
 			Mate:           beforeEval.Mate,
@@ -550,15 +597,15 @@ func hasTacticalGap(lines []types.EvalLine, moverIsWhite bool, minGap int) bool 
 	}
 
 	lineOneScore, okOne := evalLineScoreForMover(lineOne, moverIsWhite)
-	if !okOne {
+	if !okOne || lineOneScore < minGap {
 		return false
 	}
 
-	forcedGap, hasForcedGap := forcedMoveWinChancesGap(lines, moverIsWhite)
-	conditionA := lineOneScore >= layerTwoMinGapCP
-	conditionB := hasForcedGap && forcedGap >= puzzleSequenceMinWinChancesGap
-	_ = minGap
-	return conditionA && conditionB
+	forcedGap, hasForcedGap := forcedMoveWinChancesGap(lines, moverIsWhite, layerTwoMinWinChancesGap)
+	if !hasForcedGap {
+		return false
+	}
+	return forcedGap >= layerTwoMinWinChancesGap
 }
 
 func isForcedMatePuzzle(eval types.EvalResult, moverIsWhite bool) (bool, int, []string) {
@@ -587,7 +634,7 @@ func isForcedMatePuzzle(eval types.EvalResult, moverIsWhite bool) (bool, int, []
 			return false, 0, nil
 		}
 		state := mateStateForMover(eval.Mate, moverIsWhite)
-		if !state.ForcingMate || state.BeingMated || state.Distance > forcedMateMaxDistance {
+		if !state.ForcingMate || state.BeingMated || state.Distance < forcedMateMinDistance || state.Distance > forcedMateMaxDistance {
 			return false, 0, nil
 		}
 		// Single mating line from eval.BestMove
@@ -606,8 +653,8 @@ func isForcedMatePuzzle(eval types.EvalResult, moverIsWhite bool) (bool, int, []
 		}
 	}
 
-	// If minMateDistance > forcedMateMaxDistance — too deep, not a puzzle
-	if minMateDistance > forcedMateMaxDistance {
+	// If minMateDistance is outside [forcedMateMinDistance, forcedMateMaxDistance], reject.
+	if minMateDistance < forcedMateMinDistance || minMateDistance > forcedMateMaxDistance {
 		return false, 0, nil
 	}
 
@@ -735,7 +782,7 @@ func secondLineKeepsComfortableOutcome(topWC float64, secondWC float64) bool {
 	return topWC <= decisiveLoss && secondWC <= comfortLoss
 }
 
-func forcedMoveWinChancesGap(lines []types.EvalLine, moverIsWhite bool) (float64, bool) {
+func forcedMoveWinChancesGap(lines []types.EvalLine, moverIsWhite bool, minGap float64) (float64, bool) {
 	if len(lines) < 2 {
 		return 0, false
 	}
@@ -751,7 +798,7 @@ func forcedMoveWinChancesGap(lines []types.EvalLine, moverIsWhite bool) (float64
 		return 0, false
 	}
 	gap := topWC - secondWC
-	if gap < puzzleSequenceMinWinChancesGap {
+	if gap < minGap {
 		return gap, false
 	}
 	if isDecisiveSameOutcomeByWinChances(topWC, secondWC) {
@@ -783,7 +830,7 @@ func evalLineScoreForMover(line types.EvalLine, moverIsWhite bool) (int, bool) {
 }
 
 func buildPuzzle(candidate layerOneCandidate, deepEval types.EvalResult) Puzzle {
-	gap, ok := forcedMoveWinChancesGap(deepEval.Lines, candidate.MoveIsWhite)
+	gap, ok := winChancesGap(deepEval.Lines, candidate.MoveIsWhite)
 	if !ok {
 		gap = 0.0
 	}
@@ -806,191 +853,358 @@ func buildPuzzle(candidate layerOneCandidate, deepEval types.EvalResult) Puzzle 
 	}
 }
 
-// walkPuzzleSequence validates a puzzle by checking forced continuations.
-// Returns (valid, trimmedPV, depth, materialStart, materialEnd).
-// - valid: true if puzzle has forced continuation(s) or strong L2 gap for 1-move puzzle
-// - trimmedPV: the validated principal variation
-// - depth: number of ply-pairs walked
-// - materialStart: material difference at puzzle start (player - opponent)
-// - materialEnd: material difference at puzzle end
+func fallbackIssuePV(puzzle Puzzle, eval types.EvalResult) []string {
+	candidates := make([][]string, 0, 3)
+	candidates = append(candidates, puzzle.PV)
+	if len(eval.Lines) > 0 {
+		candidates = append(candidates, eval.Lines[0].PV)
+	}
+	candidates = append(candidates, eval.PV)
+
+	for _, pv := range candidates {
+		normalized := normalizePVForStorage(pv)
+		if len(normalized) > 0 {
+			return normalized
+		}
+	}
+
+	best := normalizeUCIMove(eval.BestMove)
+	if best == "" {
+		best = normalizeUCIMove(puzzle.Solution)
+	}
+	if best != "" {
+		return []string{best}
+	}
+	return []string{}
+}
+
+func normalizePVForStorage(raw []string) []string {
+	if len(raw) == 0 {
+		return []string{}
+	}
+	normalized := make([]string, 0, len(raw))
+	for _, move := range raw {
+		token := normalizeUCIMove(move)
+		if token != "" {
+			normalized = append(normalized, token)
+		}
+	}
+	if len(normalized) == 0 {
+		return []string{}
+	}
+	return normalized
+}
+
+// walkPuzzleSequence follows the best line from the puzzle start and extends it
+// while the puzzle side still has a forcing continuation. This mirrors the
+// Lichess generator shape: validate "attack" only on the puzzle side's turns,
+// accept the engine's best defense on the opponent turns, then trim the tail of
+// advantage puzzles once the forcing property disappears.
 func walkPuzzleSequence(client *stockfish.Client, puzzle Puzzle, puzzleSideIsWhite bool) (bool, []string, int, int, int) {
-	if puzzle.Solution == "" {
-		return false, nil, 0, 0, 0
+	if puzzle.Category == PuzzleCategoryForcedMate {
+		return walkForcedMateSequence(client, puzzle, puzzleSideIsWhite)
 	}
+	return walkAdvantageSequence(client, puzzle, puzzleSideIsWhite)
+}
 
-	// Calculate material at puzzle start
-	whiteMatStart, blackMatStart := materialCount(puzzle.FEN)
-	var matStart int
-	if puzzleSideIsWhite {
-		matStart = whiteMatStart - blackMatStart
-	} else {
-		matStart = blackMatStart - whiteMatStart
-	}
+func walkAdvantageSequence(client *stockfish.Client, puzzle Puzzle, puzzleSideIsWhite bool) (bool, []string, int, int, int) {
+	matStart := materialDiffForPuzzleSide(puzzle.FEN, puzzleSideIsWhite)
 
-	// Create game from puzzle FEN and apply player's first move
 	fenOpt, err := lib.FEN(puzzle.FEN)
 	if err != nil {
 		return false, nil, 0, 0, 0
 	}
 	game := lib.NewGame(fenOpt)
 
-	// Apply player's solution move
-	playerMove, err := lib.UCINotation{}.Decode(game.Position(), puzzle.Solution)
+	steps := make([]puzzleSequenceStep, 0, puzzleSequenceMaxDepth*2-1)
+	currentMatDiff := matStart
+	maxPlies := puzzleSequenceMaxDepth*2 - 1
+
+	for ply := 0; ply < maxPlies; ply++ {
+		currentFEN := game.Position().String()
+		eval := evaluatePositionCached(client, currentFEN, layerOneEvalDepth, layerTwoEvalMultiPV, 0)
+		if !isEvaluationAvailable(eval) {
+			break
+		}
+		if !hasSustainedWinningAdvantage(eval, puzzleSideIsWhite) {
+			return false, nil, 0, matStart, currentMatDiff
+		}
+
+		puzzleTurn := sideToMoveFromFEN(currentFEN) == sideFromBool(puzzleSideIsWhite)
+		if puzzleTurn && !isPuzzleSideForcingMove(eval, puzzleSideIsWhite) {
+			break
+		}
+
+		nextMove := bestSequenceMove(eval, false, puzzleSideIsWhite)
+		if nextMove == "" {
+			break
+		}
+
+		move, err := lib.UCINotation{}.Decode(game.Position(), nextMove)
+		if err != nil {
+			break
+		}
+		if err := game.Move(move, nil); err != nil {
+			break
+		}
+
+		steps = append(steps, puzzleSequenceStep{
+			Move:      nextMove,
+			HasSecond: hasSecondSequenceMove(eval),
+		})
+
+		currentMatDiff = materialDiffForPuzzleSide(game.Position().String(), puzzleSideIsWhite)
+		if currentMatDiff < -puzzleMaterialLostLimit {
+			return false, nil, 0, matStart, currentMatDiff
+		}
+
+		status := game.Position().Status()
+		if status == lib.Checkmate {
+			break
+		}
+		if status != lib.NoMethod {
+			return false, nil, 0, matStart, currentMatDiff
+		}
+	}
+
+	return finalizePuzzleSequence(puzzle, steps, matStart, currentMatDiff, puzzleSideIsWhite)
+}
+
+func walkForcedMateSequence(client *stockfish.Client, puzzle Puzzle, puzzleSideIsWhite bool) (bool, []string, int, int, int) {
+	matStart := materialDiffForPuzzleSide(puzzle.FEN, puzzleSideIsWhite)
+
+	fenOpt, err := lib.FEN(puzzle.FEN)
 	if err != nil {
 		return false, nil, 0, 0, 0
 	}
-	if err := game.Move(playerMove, nil); err != nil {
-		return false, nil, 0, 0, 0
-	}
-	afterPlayerFEN := game.Position().String()
+	game := lib.NewGame(fenOpt)
 
-	// Check material after player's move
-	whiteMatAfter, blackMatAfter := materialCount(afterPlayerFEN)
-	var playerMatAfter, opponentMatAfter int
-	if puzzleSideIsWhite {
-		playerMatAfter = whiteMatAfter
-		opponentMatAfter = blackMatAfter
-	} else {
-		playerMatAfter = blackMatAfter
-		opponentMatAfter = whiteMatAfter
-	}
-	matDeficit := opponentMatAfter - playerMatAfter
-	if matDeficit > puzzleMaterialLostLimit {
-		// Position is completely lost for puzzle side
-		return false, nil, 0, matStart, playerMatAfter - opponentMatAfter
-	}
+	moves := make([]string, 0, forcedMateMaxDistance*2-1)
+	currentMatDiff := matStart
+	maxPlies := forcedMateMaxDistance*2 - 1
 
-	// Eval position after player's first move with multiPV=3
-	afterPlayerEval := evaluatePositionCached(client, afterPlayerFEN, layerOneEvalDepth, layerTwoEvalMultiPV, 0)
-	if !isEvaluationAvailable(afterPlayerEval) {
-		return false, nil, 0, matStart, playerMatAfter - opponentMatAfter
-	}
-
-	// Check opponent reply uniqueness (from opponent's perspective)
-	opponentIsWhite := !puzzleSideIsWhite
-	replyGap, hasGap := forcedMoveWinChancesGap(afterPlayerEval.Lines, opponentIsWhite)
-	if !hasGap || replyGap < puzzleSequenceMinWinChancesGap {
-		// Opponent has multiple good replies — 1-move puzzle only
-		// Valid only if the solution itself had a big gap in L2
-		if puzzle.MultiPVGap >= puzzleSequenceMinWinChancesGap {
-			return true, []string{puzzle.Solution}, 1, matStart, playerMatAfter - opponentMatAfter
+	for ply := 0; ply < maxPlies; ply++ {
+		currentFEN := game.Position().String()
+		eval := evaluatePositionCached(client, currentFEN, layerOneEvalDepth, layerTwoEvalMultiPV, 0)
+		if !isEvaluationAvailable(eval) {
+			return false, nil, 0, matStart, currentMatDiff
 		}
-		return false, nil, 0, matStart, playerMatAfter - opponentMatAfter
-	}
-
-	// Opponent reply is forced — extend the PV
-	collectedPV := []string{puzzle.Solution}
-	currentGame := game
-	currentFEN := afterPlayerFEN
-	depth := 1
-	currentMatDiff := playerMatAfter - opponentMatAfter
-
-	for depth < puzzleSequenceMaxDepth {
-		// Get opponent's forced reply
-		opponentBestMove := afterPlayerEval.BestMove
-		if opponentBestMove == "" && len(afterPlayerEval.Lines) > 0 && len(afterPlayerEval.Lines[0].PV) > 0 {
-			opponentBestMove = normalizeUCIMove(afterPlayerEval.Lines[0].PV[0])
-		}
-		if opponentBestMove == "" {
-			break
-		}
-
-		// Apply opponent's move
-		oppMove, err := lib.UCINotation{}.Decode(currentGame.Position(), opponentBestMove)
-		if err != nil {
-			break
-		}
-		if err := currentGame.Move(oppMove, nil); err != nil {
-			break
-		}
-		collectedPV = append(collectedPV, opponentBestMove)
-		afterOpponentFEN := currentGame.Position().String()
-
-		// Check material after opponent's reply
-		whiteMatOpp, blackMatOpp := materialCount(afterOpponentFEN)
-		if puzzleSideIsWhite {
-			currentMatDiff = whiteMatOpp - blackMatOpp
-		} else {
-			currentMatDiff = blackMatOpp - whiteMatOpp
-		}
-		if currentMatDiff < -puzzleMaterialLostLimit {
-			// Puzzle side is completely lost
+		if !hasForcedMateContinuation(eval, puzzleSideIsWhite) {
 			return false, nil, 0, matStart, currentMatDiff
 		}
 
-		// Eval from player's perspective to find their next move
-		playerNextEval := evaluatePositionCached(client, afterOpponentFEN, layerOneEvalDepth, layerTwoEvalMultiPV, 0)
-		if !isEvaluationAvailable(playerNextEval) {
-			// Eval unavailable — return what we have so far
-			if len(collectedPV) >= 1 {
-				return true, collectedPV, depth, matStart, currentMatDiff
+		puzzleTurn := sideToMoveFromFEN(currentFEN) == sideFromBool(puzzleSideIsWhite)
+		if puzzleTurn {
+			ok, _, _ := isForcedMatePuzzle(eval, puzzleSideIsWhite)
+			if !ok {
+				return false, nil, 0, matStart, currentMatDiff
 			}
+		}
+
+		nextMove := bestSequenceMove(eval, puzzleTurn, puzzleSideIsWhite)
+		if nextMove == "" {
 			return false, nil, 0, matStart, currentMatDiff
 		}
 
-		// Check if player has a forced continuation
-		playerGap, hasPlayerGap := forcedMoveWinChancesGap(playerNextEval.Lines, puzzleSideIsWhite)
-		if !hasPlayerGap || playerGap < puzzleSequenceMinWinChancesGap {
-			// Player's next move is not forced — stop here
-			return true, collectedPV, depth, matStart, currentMatDiff
-		}
-
-		// Get player's forced move
-		playerBestMove := playerNextEval.BestMove
-		if playerBestMove == "" && len(playerNextEval.Lines) > 0 && len(playerNextEval.Lines[0].PV) > 0 {
-			playerBestMove = normalizeUCIMove(playerNextEval.Lines[0].PV[0])
-		}
-		if playerBestMove == "" {
-			break
-		}
-
-		// Apply player's move
-		pMove, err := lib.UCINotation{}.Decode(currentGame.Position(), playerBestMove)
+		move, err := lib.UCINotation{}.Decode(game.Position(), nextMove)
 		if err != nil {
-			break
+			return false, nil, 0, matStart, currentMatDiff
 		}
-		if err := currentGame.Move(pMove, nil); err != nil {
-			break
-		}
-		collectedPV = append(collectedPV, playerBestMove)
-		currentFEN = currentGame.Position().String()
-		depth++
-
-		// Update material
-		whiteMatP, blackMatP := materialCount(currentFEN)
-		if puzzleSideIsWhite {
-			currentMatDiff = whiteMatP - blackMatP
-		} else {
-			currentMatDiff = blackMatP - whiteMatP
+		if err := game.Move(move, nil); err != nil {
+			return false, nil, 0, matStart, currentMatDiff
 		}
 
-		// Check if puzzle side is now lost
+		moves = append(moves, nextMove)
+		currentMatDiff = materialDiffForPuzzleSide(game.Position().String(), puzzleSideIsWhite)
 		if currentMatDiff < -puzzleMaterialLostLimit {
 			return false, nil, 0, matStart, currentMatDiff
 		}
 
-		// Eval for next opponent reply
-		afterPlayerEval = evaluatePositionCached(client, currentFEN, layerOneEvalDepth, layerTwoEvalMultiPV, 0)
-		if !isEvaluationAvailable(afterPlayerEval) {
-			if len(collectedPV) >= 1 {
-				return true, collectedPV, depth, matStart, currentMatDiff
-			}
+		status := game.Position().Status()
+		if status == lib.Checkmate {
+			return buildFinalPuzzleSequence(puzzle, moves, matStart, currentMatDiff, puzzleSideIsWhite)
+		}
+		if status != lib.NoMethod {
 			return false, nil, 0, matStart, currentMatDiff
 		}
-
-		// Check opponent reply uniqueness again
-		replyGap, hasGap = forcedMoveWinChancesGap(afterPlayerEval.Lines, opponentIsWhite)
-		if !hasGap || replyGap < puzzleSequenceMinWinChancesGap {
-			// Opponent has multiple good replies — stop extending
-			return true, collectedPV, depth, matStart, currentMatDiff
-		}
 	}
 
-	// Reached max depth or loop ended
-	if len(collectedPV) >= 1 {
-		return true, collectedPV, depth, matStart, currentMatDiff
-	}
 	return false, nil, 0, matStart, currentMatDiff
+}
+
+func hasSustainedWinningAdvantage(eval types.EvalResult, puzzleSideIsWhite bool) bool {
+	if len(eval.Lines) > 0 {
+		topLine := eval.Lines[0]
+		topMateState := mateStateForMover(topLine.Mate, puzzleSideIsWhite)
+		if topMateState.ForcingMate {
+			return true
+		}
+		if topMateState.BeingMated {
+			return false
+		}
+		score, ok := evalLineScoreForMover(topLine, puzzleSideIsWhite)
+		if ok {
+			return score >= puzzleSequenceMinAdvantageCP
+		}
+	}
+
+	topMateState := mateStateForMover(eval.Mate, puzzleSideIsWhite)
+	if topMateState.ForcingMate {
+		return true
+	}
+	if topMateState.BeingMated {
+		return false
+	}
+
+	cp, ok := moverCentipawn(eval.ScoreCP, puzzleSideIsWhite)
+	if !ok {
+		return false
+	}
+	return cp >= puzzleSequenceMinAdvantageCP
+}
+
+func hasForcedMateContinuation(eval types.EvalResult, puzzleSideIsWhite bool) bool {
+	if len(eval.Lines) > 0 {
+		state := mateStateForMover(eval.Lines[0].Mate, puzzleSideIsWhite)
+		if state.ForcingMate && !state.BeingMated {
+			return true
+		}
+	}
+
+	state := mateStateForMover(eval.Mate, puzzleSideIsWhite)
+	return state.ForcingMate && !state.BeingMated
+}
+
+func isPuzzleSideForcingMove(eval types.EvalResult, puzzleSideIsWhite bool) bool {
+	if len(eval.Lines) == 0 {
+		// No multi-pv line data; fallback to allowing the walk to continue.
+		return true
+	}
+
+	lineOneState := mateStateForMover(eval.Lines[0].Mate, puzzleSideIsWhite)
+	if lineOneState.ForcingMate {
+		if len(eval.Lines) < 2 {
+			return true
+		}
+		lineTwoState := mateStateForMover(eval.Lines[1].Mate, puzzleSideIsWhite)
+		if !lineTwoState.ForcingMate {
+			return true
+		}
+		return lineOneState.Distance < lineTwoState.Distance
+	}
+
+	if len(eval.Lines) < 2 {
+		return false
+	}
+
+	topWC, okTop := winChancesForLine(eval.Lines[0], puzzleSideIsWhite)
+	secondWC, okSecond := winChancesForLine(eval.Lines[1], puzzleSideIsWhite)
+	if !okTop || !okSecond {
+		return false
+	}
+	if isDecisiveSameOutcomeByWinChances(topWC, secondWC) {
+		return false
+	}
+
+	return (topWC - secondWC) >= puzzleSequenceForcingGapWC
+}
+
+func isValidAdvantageAttack(eval types.EvalResult, puzzleSideIsWhite bool) bool {
+	return isPuzzleSideForcingMove(eval, puzzleSideIsWhite)
+}
+
+func bestSequenceMove(eval types.EvalResult, requireForcedMate bool, puzzleSideIsWhite bool) string {
+	if requireForcedMate {
+		ok, _, matingMoves := isForcedMatePuzzle(eval, puzzleSideIsWhite)
+		if ok && len(matingMoves) > 0 {
+			return normalizeUCIMove(matingMoves[0])
+		}
+	}
+	if len(eval.Lines) > 0 && len(eval.Lines[0].PV) > 0 {
+		return normalizeUCIMove(eval.Lines[0].PV[0])
+	}
+	return normalizeUCIMove(eval.BestMove)
+}
+
+func hasSecondSequenceMove(eval types.EvalResult) bool {
+	if len(eval.Lines) < 2 || len(eval.Lines[1].PV) == 0 {
+		return false
+	}
+	return normalizeUCIMove(eval.Lines[1].PV[0]) != ""
+}
+
+func materialDiffForPuzzleSide(fen string, puzzleSideIsWhite bool) int {
+	white, black := materialCount(fen)
+	if puzzleSideIsWhite {
+		return white - black
+	}
+	return black - white
+}
+
+func movesFromSequenceSteps(steps []puzzleSequenceStep) []string {
+	moves := make([]string, 0, len(steps))
+	for _, step := range steps {
+		move := normalizeUCIMove(step.Move)
+		if move != "" {
+			moves = append(moves, move)
+		}
+	}
+	return moves
+}
+
+func finalizePuzzleSequence(puzzle Puzzle, steps []puzzleSequenceStep, matStart int, fallbackMatEnd int, puzzleSideIsWhite bool) (bool, []string, int, int, int) {
+	if len(steps) == 0 {
+		return false, nil, 0, matStart, fallbackMatEnd
+	}
+
+	rawPV := movesFromSequenceSteps(steps)
+	if len(rawPV) < puzzleSequenceMinNonMateLength {
+		return false, nil, 0, matStart, fallbackMatEnd
+	}
+
+	return buildFinalPuzzleSequence(puzzle, rawPV, matStart, fallbackMatEnd, puzzleSideIsWhite)
+}
+
+func buildFinalPuzzleSequence(puzzle Puzzle, rawPV []string, matStart int, fallbackMatEnd int, puzzleSideIsWhite bool) (bool, []string, int, int, int) {
+	if len(rawPV) == 0 {
+		return false, nil, 0, matStart, fallbackMatEnd
+	}
+
+	trimmedPV := append([]string(nil), rawPV...)
+
+	materialEnd := fallbackMatEnd
+	if diff, ok := materialDiffAfterPV(puzzle.FEN, trimmedPV, puzzleSideIsWhite); ok {
+		materialEnd = diff
+	}
+	depth := (len(trimmedPV) + 1) / 2
+	return true, trimmedPV, depth, matStart, materialEnd
+}
+
+func materialDiffAfterPV(startFEN string, pv []string, puzzleSideIsWhite bool) (int, bool) {
+	if len(pv) == 0 {
+		return 0, false
+	}
+
+	fenOpt, err := lib.FEN(startFEN)
+	if err != nil {
+		return 0, false
+	}
+	game := lib.NewGame(fenOpt)
+	for _, uci := range pv {
+		move, err := lib.UCINotation{}.Decode(game.Position(), uci)
+		if err != nil {
+			return 0, false
+		}
+		if err := game.Move(move, nil); err != nil {
+			return 0, false
+		}
+	}
+
+	white, black := materialCount(game.Position().String())
+	if puzzleSideIsWhite {
+		return white - black, true
+	}
+	return black - white, true
 }
 
 func scoreOrZero(scoreCP *int) int {
@@ -1282,6 +1496,13 @@ func colorFromSide(side string) string {
 		return "black"
 	}
 	return "white"
+}
+
+func sideFromBool(isWhite bool) string {
+	if isWhite {
+		return "w"
+	}
+	return "b"
 }
 
 func colorFromBool(isWhite bool) string {

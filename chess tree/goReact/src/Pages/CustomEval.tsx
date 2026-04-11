@@ -31,6 +31,7 @@ interface Puzzle {
   aftermate: number;
   winprobbefore: number;
   winprobafter: number;
+  solution: string[];
 }
 
 interface EvalLineResponse {
@@ -84,7 +85,6 @@ const evalPosition = async (fen: string): Promise<EvalApiResponse> => {
 };
 
 const CustomEval = () => {
-  // ─── State ─────────────────────────────────────────────────
   const [selectedType, setSelectedType] = useState("all");
   const [puzzleIndex, setPuzzleIndex] = useState(0);
   const [attempts, setAttempts] = useState<PuzzleAttempt[]>([]);
@@ -119,7 +119,6 @@ const CustomEval = () => {
   const currentFen = positionHistory[currentMoveIndex + 1] || puzzle?.fen || "";
   const isFlipped = puzzle?.playercolor === "black";
 
-  // TanStack Query hook for eval - caches by FEN
   useQuery({
     queryKey: ["eval", currentFen],
     queryFn: () => evalPosition(currentFen),
@@ -299,7 +298,7 @@ const CustomEval = () => {
 
   const handleGetHint = useCallback(() => {
     if (!puzzle || status !== "playing") return;
-    const expectedMove = puzzle.pv[expectedPvIndex] || puzzle.bestmove;
+    const expectedMove = puzzle.solution[expectedPvIndex] || puzzle.bestmove;
     if (!expectedMove || expectedMove.length < 4) return;
     setArrows([{ from: expectedMove.slice(0, 2), to: expectedMove.slice(2, 4), color: colors.arrowGreen }]);
   }, [puzzle, status, expectedPvIndex]);
@@ -342,7 +341,7 @@ const CustomEval = () => {
       const fens = [puzzle.fen];
       const moves: string[] = [];
 
-      for (const uci of puzzle.pv) {
+      for (const uci of puzzle.solution) {
         if (!uci || uci.length < 4) break;
         const move = game.move({
           from: uci.slice(0, 2) as Square,
@@ -384,7 +383,7 @@ const CustomEval = () => {
 
       const newFen = game.fen();
       const userUci = sourceSquare + targetSquare;
-      const expectedMove = puzzle.pv[expectedPvIndex] || puzzle.bestmove;
+      const expectedMove = puzzle.solution[expectedPvIndex] || puzzle.bestmove;
 
       const basePositions = positionHistory.slice(0, currentMoveIndex + 2);
       const baseMoves = moveHistory.slice(0, currentMoveIndex + 1);
@@ -406,14 +405,14 @@ const CustomEval = () => {
         if (isCorrect) {
           setLastExpectedMoveSan("");
           const opponentIndex = expectedPvIndex + 1;
-          const hasOpponentReply = opponentIndex < puzzle.pv.length;
+          const hasOpponentReply = opponentIndex < puzzle.solution.length;
 
           if (!hasOpponentReply) {
             completePuzzle();
             return true;
           }
 
-          const opponentUci = puzzle.pv[opponentIndex];
+          const opponentUci = puzzle.solution[opponentIndex];
           if (!opponentUci || opponentUci.length < 4) {
             completePuzzle();
             return true;
@@ -444,7 +443,7 @@ const CustomEval = () => {
             setCurrentMoveIndex(movesAfterReply.length - 1);
             setExpectedPvIndex(nextUserIndex);
             setIsPlayingLine(false);
-            if (nextUserIndex >= puzzle.pv.length) completePuzzle();
+            if (nextUserIndex >= puzzle.solution.length) completePuzzle();
           }, 450);
         } else {
           setStatus("wrong");

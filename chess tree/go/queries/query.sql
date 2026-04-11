@@ -107,6 +107,7 @@ INSERT INTO Issues (
   BestMove,
   Ponder,
   PV,
+  Solution,
   Depth,
   ScoreCP,
   Mate,
@@ -118,8 +119,8 @@ INSERT INTO Issues (
   WinProbDelta
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
-  $22, $23, $24, $25
+  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+  $23, $24, $25, $26
 );
 
 -- name: GetIssues :many
@@ -157,9 +158,6 @@ SELECT
 FROM issues
 WHERE fen = $1
 ORDER BY depth DESC, moveindex ASC;
-
---name : CursorPuzzle :many
-
 
 
 

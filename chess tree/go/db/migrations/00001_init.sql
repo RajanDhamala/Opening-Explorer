@@ -53,8 +53,9 @@ CREATE TABLE Issues(
 	WinProbAfter  DOUBLE PRECISION NOT NULL,
   playedmoveuci TEXT NOT NULL,
   playedmovesan TEXT NOT NULL,
-  cpdelta int NOT NULL, 
-  winprobdelta DOUBLE PRECISION NOT NULL 
+  cpdelta int NOT NULL,
+  winprobdelta DOUBLE PRECISION NOT NULL,
+  solution TEXT[] NOT NULL
 );
 
 -- +goose Down
@@ -63,4 +64,3 @@ DROP TABLE IF EXISTS Issues;
 DROP TABLE IF EXISTS Games;
 DROP TABLE IF EXISTS Users;
 DROP TYPE IF EXISTS plan_type;
-

@@ -94,6 +94,7 @@ type Issue struct {
 	Playedmovesan  string      `json:"playedmovesan"`
 	Cpdelta        int32       `json:"cpdelta"`
 	Winprobdelta   float64     `json:"winprobdelta"`
+	Solution       []string    `json:"solution"`
 }
 
 type User struct {

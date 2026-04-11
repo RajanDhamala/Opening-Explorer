@@ -144,6 +144,7 @@ type EvalResult struct {
 	BestMove string
 	Ponder   string
 	PV       []string
+	Solution []string
 	Depth    int
 	ScoreCP  *int
 	Mate     *int
@@ -173,6 +174,7 @@ type MoveIssue struct {
 	BestMove string
 	Ponder   string
 	PV       []string
+	Solution []string
 	Depth    int
 	ScoreCP  *int
 	Mate     *int
@@ -243,6 +245,7 @@ type IssueRow struct {
 	BestMove       string
 	Ponder         string
 	PV             []string
+	Solution       []string
 	Depth          int32
 	ScoreCP        int32
 	Mate           int32
@@ -256,6 +259,14 @@ type IssueRow struct {
 
 // Values returns the row values in column order for pgx CopyFrom
 func (r IssueRow) Values() []interface{} {
+	pv := r.PV
+	if pv == nil {
+		pv = []string{}
+	}
+	solution := r.Solution
+	if solution == nil {
+		solution = []string{}
+	}
 	return []interface{}{
 		r.ID,
 		r.GameID,
@@ -272,7 +283,8 @@ func (r IssueRow) Values() []interface{} {
 		r.PlayedBestMove,
 		r.BestMove,
 		r.Ponder,
-		r.PV,
+		pv,
+		solution,
 		r.Depth,
 		r.ScoreCP,
 		r.Mate,
@@ -304,6 +316,14 @@ func MoveIssueToRow(issue MoveIssue, issueID [16]byte, gameID [16]byte) IssueRow
 	if issue.AfterMate != nil {
 		afterMate = int32(*issue.AfterMate)
 	}
+	pv := []string{}
+	if len(issue.PV) > 0 {
+		pv = append([]string(nil), issue.PV...)
+	}
+	solution := []string{}
+	if len(issue.Solution) > 0 {
+		solution = append([]string(nil), issue.Solution...)
+	}
 
 	return IssueRow{
 		ID:             issueID,
@@ -321,7 +341,8 @@ func MoveIssueToRow(issue MoveIssue, issueID [16]byte, gameID [16]byte) IssueRow
 		PlayedBestMove: issue.PlayedBestMove,
 		BestMove:       issue.BestMove,
 		Ponder:         issue.Ponder,
-		PV:             issue.PV,
+		PV:             pv,
+		Solution:       solution,
 		Depth:          int32(issue.Depth),
 		ScoreCP:        scoreCP,
 		Mate:           mate,

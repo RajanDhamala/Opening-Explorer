@@ -20,6 +20,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+func filterIssuesWithSolution(issues []db.Issue) []db.Issue {
+	filtered := make([]db.Issue, 0, len(issues))
+	for _, issue := range issues {
+		if len(issue.Solution) == 0 {
+			continue
+		}
+		filtered = append(filtered, issue)
+	}
+	return filtered
+}
+
 func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
 	if !ok || userClaims == nil {
@@ -57,99 +68,52 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 			"error": err.Error(),
 		})
 	}
-	username := "NbcWala"
+	username := "Ashish1234555"
 	evalGames := utils.EvaluateAllGames(usrGames, username)
-	gameResults := Processpipline.PlayGames(evalGames, utils.Client)
+	resultStream := Processpipline.PlayGamesStream(evalGames, utils.Client)
+	gameResults := make([]types.EvalGameResult, 0, len(evalGames))
 
 	failedCount := 0
 	successCount := 0
 
 	totalIssues := 0
 	gamesWithIssues := 0
-
-	ids := make([]pgtype.UUID, 0, len(gameResults))
-	gameurls := make([]string, 0, len(gameResults))
-	whiteusernames := make([]string, 0, len(gameResults))
-	blackusernames := make([]string, 0, len(gameResults))
-	whiteratings := make([]int32, 0, len(gameResults))
-	blackratings := make([]int32, 0, len(gameResults))
-	playercolors := make([]string, 0, len(gameResults))
-	timeclasses := make([]string, 0, len(gameResults))
-	results := make([]string, 0, len(gameResults))
-	issuecounts := make([]int32, 0, len(gameResults))
-	userids := make([]int32, 0, len(gameResults))
-
-	for _, item := range gameResults {
-		totalIssues += item.IssueCount
-
-		if item.IssueCount > 0 {
-			gamesWithIssues++
-		}
-
-		var gameID pgtype.UUID
-		if err := gameID.Scan(item.GameID); err != nil {
-			failedCount++
-			fmt.Println("failed to parse game id:", err)
-			continue
-		}
-
-		ids = append(ids, gameID)
-		gameurls = append(gameurls, item.GameURL)
-		whiteusernames = append(whiteusernames, item.WhiteUsername)
-		blackusernames = append(blackusernames, item.BlackUsername)
-		whiteratings = append(whiteratings, int32(item.WhiteRating))
-		blackratings = append(blackratings, int32(item.BlackRating))
-		playercolors = append(playercolors, item.PlayerColor)
-		timeclasses = append(timeclasses, item.TimeClass)
-		results = append(results, item.Result)
-		issuecounts = append(issuecounts, int32(item.IssueCount))
-		userids = append(userids, userID)
-	}
-
-	if len(ids) > 0 {
-		err := ctrl.queries.CreateGamesBulk(c.Context(), db.CreateGamesBulkParams{
-			Ids:            ids,
-			Gameurls:       gameurls,
-			Whiteusernames: whiteusernames,
-			Blackusernames: blackusernames,
-			Whiteratings:   whiteratings,
-			Blackratings:   blackratings,
-			Playercolors:   playercolors,
-			Timeclasses:    timeclasses,
-			Results:        results,
-			Issuecounts:    issuecounts,
-			Userids:        userids,
-		})
-		if err != nil {
-			failedCount += len(ids)
-			fmt.Println("failed to bulk upsert games:", err)
-		} else {
-			successCount += len(ids)
-		}
-	}
-
-	// Bulk insert issues using pgx CopyFrom
 	issueInsertCount := int64(0)
 	issueFailedCount := 0
-	if totalIssues > 0 {
-		issueRows := make([]types.IssueRow, 0, totalIssues)
-		for _, gameResult := range gameResults {
-			if len(gameResult.Issues) == 0 {
-				continue
-			}
-			var gameUUID [16]byte
-			parsed, err := uuid.Parse(gameResult.GameID)
-			if err != nil {
-				fmt.Println("failed to parse game UUID for issues:", err)
-				issueFailedCount += len(gameResult.Issues)
-				continue
-			}
-			gameUUID = parsed
 
-			for _, issue := range gameResult.Issues {
-				issueUUID := uuid.New()
-				row := types.MoveIssueToRow(issue, issueUUID, gameUUID)
-				issueRows = append(issueRows, row)
+	ids := make([]pgtype.UUID, 0, len(evalGames))
+	gameurls := make([]string, 0, len(evalGames))
+	whiteusernames := make([]string, 0, len(evalGames))
+	blackusernames := make([]string, 0, len(evalGames))
+	whiteratings := make([]int32, 0, len(evalGames))
+	blackratings := make([]int32, 0, len(evalGames))
+	playercolors := make([]string, 0, len(evalGames))
+	timeclasses := make([]string, 0, len(evalGames))
+	results := make([]string, 0, len(evalGames))
+	issuecounts := make([]int32, 0, len(evalGames))
+	userids := make([]int32, 0, len(evalGames))
+	issueRows := make([]types.IssueRow, 0, len(evalGames))
+
+	flushBatches := func() {
+		if len(ids) > 0 {
+			err := ctrl.queries.CreateGamesBulk(c.Context(), db.CreateGamesBulkParams{
+				Ids:            ids,
+				Gameurls:       gameurls,
+				Whiteusernames: whiteusernames,
+				Blackusernames: blackusernames,
+				Whiteratings:   whiteratings,
+				Blackratings:   blackratings,
+				Playercolors:   playercolors,
+				Timeclasses:    timeclasses,
+				Results:        results,
+				Issuecounts:    issuecounts,
+				Userids:        userids,
+			})
+			if err != nil {
+				failedCount += len(ids)
+				fmt.Println("failed to bulk upsert games:", err)
+			} else {
+				successCount += len(ids)
 			}
 		}
 
@@ -159,10 +123,81 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 				fmt.Println("failed to bulk insert issues:", err)
 				issueFailedCount += len(issueRows)
 			} else {
-				issueInsertCount = inserted
+				issueInsertCount += inserted
 			}
 		}
+
+		ids = ids[:0]
+		gameurls = gameurls[:0]
+		whiteusernames = whiteusernames[:0]
+		blackusernames = blackusernames[:0]
+		whiteratings = whiteratings[:0]
+		blackratings = blackratings[:0]
+		playercolors = playercolors[:0]
+		timeclasses = timeclasses[:0]
+		results = results[:0]
+		issuecounts = issuecounts[:0]
+		userids = userids[:0]
+		issueRows = issueRows[:0]
 	}
+
+	flushTicker := time.NewTicker(time.Minute)
+	defer flushTicker.Stop()
+
+	for {
+		select {
+		case result, ok := <-resultStream:
+			if !ok {
+				flushBatches()
+				goto done
+			}
+
+			gameResults = append(gameResults, result)
+			totalIssues += result.IssueCount
+			if result.IssueCount > 0 {
+				gamesWithIssues++
+			}
+
+			var gameID pgtype.UUID
+			if err := gameID.Scan(result.GameID); err != nil {
+				failedCount++
+				issueFailedCount += len(result.Issues)
+				fmt.Println("failed to parse game id:", err)
+				continue
+			}
+
+			ids = append(ids, gameID)
+			gameurls = append(gameurls, result.GameURL)
+			whiteusernames = append(whiteusernames, result.WhiteUsername)
+			blackusernames = append(blackusernames, result.BlackUsername)
+			whiteratings = append(whiteratings, int32(result.WhiteRating))
+			blackratings = append(blackratings, int32(result.BlackRating))
+			playercolors = append(playercolors, result.PlayerColor)
+			timeclasses = append(timeclasses, result.TimeClass)
+			results = append(results, result.Result)
+			issuecounts = append(issuecounts, int32(result.IssueCount))
+			userids = append(userids, userID)
+
+			if len(result.Issues) == 0 {
+				continue
+			}
+
+			gameUUID, err := uuid.Parse(result.GameID)
+			if err != nil {
+				issueFailedCount += len(result.Issues)
+				fmt.Println("failed to parse game UUID for issues:", err)
+				continue
+			}
+			for _, issue := range result.Issues {
+				issueUUID := uuid.New()
+				issueRows = append(issueRows, types.MoveIssueToRow(issue, issueUUID, gameUUID))
+			}
+		case <-flushTicker.C:
+			flushBatches()
+		}
+	}
+
+done:
 
 	return c.Status(200).JSON(fiber.Map{
 		"message":          "we evaluated all fetched games",
@@ -261,6 +296,7 @@ func (ctrl *Controller) GetUserPuzzles(c *fiber.Ctx) error {
 			"error": "failed to fetch puzzles",
 		})
 	}
+	issues = filterIssuesWithSolution(issues)
 
 	return c.Status(200).JSON(fiber.Map{
 		"message": "puzzles fetched successfully",
@@ -300,6 +336,7 @@ func (ctrl *Controller) GetPuzzlesByType(c *fiber.Ctx) error {
 			"error": "failed to fetch puzzles",
 		})
 	}
+	issues = filterIssuesWithSolution(issues)
 
 	return c.Status(200).JSON(fiber.Map{
 		"message":    "puzzles fetched successfully",

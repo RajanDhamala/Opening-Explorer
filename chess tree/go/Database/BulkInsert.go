@@ -26,6 +26,7 @@ var issueColumns = []string{
 	"bestmove",
 	"ponder",
 	"pv",
+	"solution",
 	"depth",
 	"scorecp",
 	"mate",
