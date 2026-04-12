@@ -14,8 +14,8 @@ import (
 
 	opening "chess/Opening"
 
+	lib "github.com/RajanDhamala/chess/v2"
 	stockfish "github.com/RajanDhamala/go-stockfish"
-	lib "github.com/corentings/chess/v2"
 )
 
 type moveSnapshot struct {

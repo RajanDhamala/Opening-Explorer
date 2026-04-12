@@ -1,5 +1,5 @@
-github.com/RajanDhamala/go-stockfish v0.0.0-20260228093510-cab91a46c419 h1:QSZhjRaYMyHMq3GBb9+8aqg81pDwO4MyDcjxrKYZWYY=
-github.com/RajanDhamala/go-stockfish v0.0.0-20260228093510-cab91a46c419/go.mod h1:wFFa5serJDhKyI1yzgHjKfI1SRIsD0Irhg3AU5hV4jo=
+github.com/RajanDhamala/chess/v2 v2.0.1 h1:kHElcyB1DZXaBDRY7mlLxy8o6N0eoPa74ZW0Qgn48eQ=
+github.com/RajanDhamala/chess/v2 v2.0.1/go.mod h1:Toa9v0iHuHo+JwjehnF4ujoksmBOQDDtS8cMkar+1T4=
 github.com/RajanDhamala/go-stockfish v0.0.0-20260404110214-948de094fed8 h1:J62kgpEKBPWKwKK34Bsuk5ob5JHIgBqjaD7uuD6L3P8=
 github.com/RajanDhamala/go-stockfish v0.0.0-20260404110214-948de094fed8/go.mod h1:wFFa5serJDhKyI1yzgHjKfI1SRIsD0Irhg3AU5hV4jo=
 github.com/andybalholm/brotli v1.1.0 h1:eLKJA0d02Lf0mVpIDgYnqXcUn0GqVmEFny3VuID1U3M=
@@ -51,10 +51,10 @@ github.com/valyala/tcplisten v1.0.0 h1:rBHj/Xf+E1tRGZyWIWwJDiRY0zc1Js+CV5DqwacVS
 github.com/valyala/tcplisten v1.0.0/go.mod h1:T0xQ8SeCZGxckz9qRXTfG43PvQ/mcWh7FwZEA7Ioqkc=
 golang.org/x/crypto v0.48.0 h1:/VRzVqiRSggnhY7gNRxPauEQ5Drw9haKdM0jqfcCFts=
 golang.org/x/crypto v0.48.0/go.mod h1:r0kV5h3qnFPlQnBSrULhlsRfryS2pmewsg+XfMgkVos=
-golang.org/x/exp v0.0.0-20260209203927-2842357ff358 h1:kpfSV7uLwKJbFSEgNhWzGSL47NDSF/5pYYQw1V0ub6c=
-golang.org/x/exp v0.0.0-20260209203927-2842357ff358/go.mod h1:R3t0oliuryB5eenPWl3rrQxwnNM3WTwnsRZZiXLAAW8=
-golang.org/x/sync v0.19.0 h1:vV+1eWNmZ5geRlYjzm2adRgW2/mcpevXNg50YZtPCE4=
-golang.org/x/sync v0.19.0/go.mod h1:9KTHXmSnoGruLpwFjVSX0lNNA75CykiMECbovNTZqGI=
+golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90 h1:jiDhWWeC7jfWqR9c/uplMOqJ0sbNlNWv0UkzE0vX1MA=
+golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90/go.mod h1:xE1HEv6b+1SCZ5/uscMRjUBKtIxworgEcEi+/n9NQDQ=
+golang.org/x/sync v0.20.0 h1:e0PTpb7pjO8GAtTs2dQ6jYa5BWYlMuX047Dco/pItO4=
+golang.org/x/sync v0.20.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
 golang.org/x/sys v0.0.0-20220811171246-fbc7d0a398ab/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.41.0 h1:Ivj+2Cp/ylzLiEU89QhWblYnOE9zerudt9Ftecq2C6k=

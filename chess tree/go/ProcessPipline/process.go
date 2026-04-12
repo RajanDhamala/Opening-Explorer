@@ -7,7 +7,7 @@ import (
 
 	// "errors"
 	"chess/Types"
-	lib "github.com/corentings/chess/v2"
+	lib "github.com/RajanDhamala/chess/v2"
 )
 
 var (

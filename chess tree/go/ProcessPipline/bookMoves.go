@@ -3,8 +3,8 @@ package Processpipline
 import (
 	"fmt"
 
-	"github.com/corentings/chess/v2"
-	"github.com/corentings/chess/v2/opening"
+	"github.com/RajanDhamala/chess/v2"
+	opening "github.com/RajanDhamala/chess/v2/opening"
 )
 
 var book = opening.NewBookECO()

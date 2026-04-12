@@ -3,6 +3,7 @@ module chess
 go 1.25.0
 
 require (
+	github.com/RajanDhamala/chess/v2 v2.0.1
 	github.com/RajanDhamala/go-stockfish v0.0.0-20260404110214-948de094fed8
 	github.com/corentings/chess/v2 v2.3.4
 	github.com/gofiber/fiber/v2 v2.52.10
@@ -26,8 +27,8 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
-	golang.org/x/exp v0.0.0-20260209203927-2842357ff358 // indirect
-	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 )
