@@ -159,5 +159,25 @@ FROM issues
 WHERE fen = $1
 ORDER BY depth DESC, moveindex ASC;
 
+-- name: GetPuzzlesFast :many
+SELECT _id, fen, moves, rating, themes, openingtags
+FROM puzzles
+TABLESAMPLE BERNOULLI(50)
+WHERE rating BETWEEN @min_rating AND @max_rating
+  AND (
+    array_length(@themes::TEXT[], 1) IS NULL
+    OR themes && @themes::TEXT[]
+  )
+LIMIT @limit_count;
 
 
+-- name: GetPuzzlesFallback :many
+SELECT _id, fen, moves, rating, themes, openingtags
+FROM puzzles
+WHERE rating BETWEEN @min_rating AND @max_rating
+  AND (
+    array_length(@themes::TEXT[], 1) IS NULL
+    OR themes && @themes::TEXT[]
+  )
+ORDER BY RANDOM()
+LIMIT @limit_count;

@@ -51,6 +51,7 @@ func main() {
 
 	Routes.UserRouter(app, controller)
 	Routes.GameRouter(app, controller)
+	Routes.WoodpeakerRouter(app, controller)
 	if err := app.Listen(":3030"); err != nil {
 		fmt.Println("server failed to start:", err)
 	}

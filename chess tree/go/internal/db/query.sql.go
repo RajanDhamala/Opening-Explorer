@@ -454,6 +454,126 @@ func (q *Queries) GetPuzzlesCount(ctx context.Context, userID int32) (int64, err
 	return count, err
 }
 
+const getPuzzlesFallback = `-- name: GetPuzzlesFallback :many
+SELECT _id, fen, moves, rating, themes, openingtags
+FROM puzzles
+WHERE rating BETWEEN $1 AND $2
+  AND (
+    array_length($3::TEXT[], 1) IS NULL
+    OR themes && $3::TEXT[]
+  )
+ORDER BY RANDOM()
+LIMIT $4
+`
+
+type GetPuzzlesFallbackParams struct {
+	MinRating  int32    `json:"min_rating"`
+	MaxRating  int32    `json:"max_rating"`
+	Themes     []string `json:"themes"`
+	LimitCount int32    `json:"limit_count"`
+}
+
+type GetPuzzlesFallbackRow struct {
+	ID          string      `json:"_id"`
+	Fen         string      `json:"fen"`
+	Moves       string      `json:"moves"`
+	Rating      int32       `json:"rating"`
+	Themes      []string    `json:"themes"`
+	Openingtags pgtype.Text `json:"openingtags"`
+}
+
+func (q *Queries) GetPuzzlesFallback(ctx context.Context, arg GetPuzzlesFallbackParams) ([]GetPuzzlesFallbackRow, error) {
+	rows, err := q.db.Query(ctx, getPuzzlesFallback,
+		arg.MinRating,
+		arg.MaxRating,
+		arg.Themes,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetPuzzlesFallbackRow
+	for rows.Next() {
+		var i GetPuzzlesFallbackRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Fen,
+			&i.Moves,
+			&i.Rating,
+			&i.Themes,
+			&i.Openingtags,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPuzzlesFast = `-- name: GetPuzzlesFast :many
+SELECT _id, fen, moves, rating, themes, openingtags
+FROM puzzles
+TABLESAMPLE BERNOULLI(50)
+WHERE rating BETWEEN $1 AND $2
+  AND (
+    array_length($3::TEXT[], 1) IS NULL
+    OR themes && $3::TEXT[]
+  )
+LIMIT $4
+`
+
+type GetPuzzlesFastParams struct {
+	MinRating  int32    `json:"min_rating"`
+	MaxRating  int32    `json:"max_rating"`
+	Themes     []string `json:"themes"`
+	LimitCount int32    `json:"limit_count"`
+}
+
+type GetPuzzlesFastRow struct {
+	ID          string      `json:"_id"`
+	Fen         string      `json:"fen"`
+	Moves       string      `json:"moves"`
+	Rating      int32       `json:"rating"`
+	Themes      []string    `json:"themes"`
+	Openingtags pgtype.Text `json:"openingtags"`
+}
+
+func (q *Queries) GetPuzzlesFast(ctx context.Context, arg GetPuzzlesFastParams) ([]GetPuzzlesFastRow, error) {
+	rows, err := q.db.Query(ctx, getPuzzlesFast,
+		arg.MinRating,
+		arg.MaxRating,
+		arg.Themes,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetPuzzlesFastRow
+	for rows.Next() {
+		var i GetPuzzlesFastRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Fen,
+			&i.Moves,
+			&i.Rating,
+			&i.Themes,
+			&i.Openingtags,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUserIssues = `-- name: GetUserIssues :many
 SELECT i._id, i.game_id, i.moveindex, i.movesan, i.moveuci, i.fen, i.sidetomove, i.playercolor, i.usercolor, i.issuetype, i.playedbestmove, i.bestmove, i.ponder, i.pv, i.depth, i.scorecp, i.mate, i.afterscorecp, i.aftermate, i.winprobbefore, i.winprobafter, i.playedmoveuci, i.playedmovesan, i.cpdelta, i.winprobdelta, i.solution FROM issues i
 JOIN games g ON i.game_id = g._id

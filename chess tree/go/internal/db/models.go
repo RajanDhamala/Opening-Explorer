@@ -97,6 +97,17 @@ type Issue struct {
 	Solution       []string    `json:"solution"`
 }
 
+type Puzzle struct {
+	ID          string      `json:"_id"`
+	Fen         string      `json:"fen"`
+	Moves       string      `json:"moves"`
+	Rating      int32       `json:"rating"`
+	Themes      []string    `json:"themes"`
+	Openingtags pgtype.Text `json:"openingtags"`
+	Source      pgtype.Text `json:"source"`
+	Createdat   pgtype.Date `json:"createdat"`
+}
+
 type User struct {
 	ID           int32       `json:"_id"`
 	Fullname     string      `json:"fullname"`

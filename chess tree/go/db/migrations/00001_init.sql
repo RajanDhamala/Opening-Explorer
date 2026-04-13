@@ -28,22 +28,6 @@ CREATE TABLE Games(
   createdate DATE DEFAULT CURRENT_DATE
 );
 
-
-CREATE TABLE Puzzles(
-_id TEXT PRIMARY KEY,
-fen TEXT NOT NULL,
-moves TEXT NOT NULL,
-rating int NOT NULL,
-themes TEXT[] NOT NULL,
-openingTags TEXT DEFAULT NULL,
-source  TEXT DEFAULT 'lichess',
-createdAt DATE DEFAULT CURRENT_DATE
-);
-
-CREATE INDEX idx_rating ON Puzzles (rating);
-CREATE INDEX idx_themes ON Puzzles USING GIN (themes);
-
-
 CREATE TABLE Issues(
   _id UUID PRIMARY KEY,
   game_id UUID NOT NULL REFERENCES Games(_id) ON DELETE CASCADE,
@@ -73,8 +57,36 @@ CREATE TABLE Issues(
   solution TEXT[] NOT NULL
 );
 
+CREATE TABLE Puzzles(
+_id TEXT PRIMARY KEY,
+fen TEXT NOT NULL,
+moves TEXT NOT NULL,
+rating int NOT NULL,
+themes TEXT[] NOT NULL,
+openingTags TEXT DEFAULT NULL,
+source  TEXT DEFAULT 'lichess',
+createdAt DATE DEFAULT CURRENT_DATE
+);
+
+CREATE INDEX idx_rating ON Puzzles (rating);
+CREATE INDEX idx_themes ON Puzzles USING GIN (themes);
+
+CREATE TABLE PuzzleSessions(
+  _id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id INTEGER NOT NULL REFERENCES Users(_id) ON DELETE CASCADE,  
+  puzzle_id TEXT NOT NULL REFERENCES Puzzles(_id),                  
+  assigned_at DATE DEFAULT CURRENT_DATE,
+  isSolved BOOLEAN DEFAULT FALSE,
+  solved_at DATE,                                                  
+  UNIQUE(user_id, puzzle_id)                                        
+);
+
+CREATE INDEX idx_puzzlesession_user ON PuzzleSessions(user_id);      
+CREATE INDEX idx_puzzlesession_puzzle ON PuzzleSessions(puzzle_id); 
+
 -- +goose Down
 
+DROP TABLE IF EXISTS PuzzelSessions;
 DROP TABLE IF EXISTS Issues;
 DROP TABLE IF EXISTS Games;
 DROP TABLE IF EXISTS Users;
