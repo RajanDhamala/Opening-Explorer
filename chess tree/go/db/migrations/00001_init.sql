@@ -29,6 +29,21 @@ CREATE TABLE Games(
 );
 
 
+CREATE TABLE Puzzles(
+_id TEXT PRIMARY KEY,
+fen TEXT NOT NULL,
+moves TEXT NOT NULL,
+rating int NOT NULL,
+themes TEXT[] NOT NULL,
+openingTags TEXT DEFAULT NULL,
+source  TEXT DEFAULT 'lichess',
+createdAt DATE DEFAULT CURRENT_DATE
+);
+
+CREATE INDEX idx_rating ON Puzzles (rating);
+CREATE INDEX idx_themes ON Puzzles USING GIN (themes);
+
+
 CREATE TABLE Issues(
   _id UUID PRIMARY KEY,
   game_id UUID NOT NULL REFERENCES Games(_id) ON DELETE CASCADE,
@@ -64,3 +79,4 @@ DROP TABLE IF EXISTS Issues;
 DROP TABLE IF EXISTS Games;
 DROP TABLE IF EXISTS Users;
 DROP TYPE IF EXISTS plan_type;
+DROP TABLE IF EXISTS Puzzles;

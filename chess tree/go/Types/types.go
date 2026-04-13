@@ -354,3 +354,12 @@ func MoveIssueToRow(issue MoveIssue, issueID [16]byte, gameID [16]byte) IssueRow
 		WinProbDelta:   issue.WinProbDelta,
 	}
 }
+
+type Puzzle struct {
+	Id          string
+	Fen         string
+	Moves       string
+	Rating      int
+	Themes      []string
+	OpeningTags string
+}

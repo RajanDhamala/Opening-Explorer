@@ -420,3 +420,17 @@ func (ctrl *Controller) EvalPostion(c *fiber.Ctx) error {
 		},
 	})
 }
+
+func (ctrl *Controller) CopyPuzzelsDb(c *fiber.Ctx) error {
+	err := utils.ReadCsv(c.Context(), ctrl.pool)
+	fmt.Println("error:", err)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"message": "failed to update ",
+			"error":   err,
+		})
+	}
+	return c.Status(200).JSON(fiber.Map{
+		"message": "inserted to db",
+	})
+}

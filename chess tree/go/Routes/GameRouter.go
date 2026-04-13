@@ -24,7 +24,7 @@ func GameRouter(app *fiber.App, controller *Controllers.Controller) {
 	GameRouter.Get("/puzzles", middlewares.UserAuthenticate, controller.GetUserPuzzles)
 	GameRouter.Get("/puzzles/:type", middlewares.UserAuthenticate, controller.GetPuzzlesByType)
 	GameRouter.Post("/eval", controller.EvalPostion)
-
+	GameRouter.Get("/push", controller.CopyPuzzelsDb)
 	GameRouter.Post("/count", func(c *fiber.Ctx) error {
 		type Reqtype struct {
 			Fen string `json:"fen"`

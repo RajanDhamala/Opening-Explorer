@@ -1,8 +1,9 @@
 package Database
 
 import (
-	"chess/Types"
 	"context"
+
+	"chess/Types"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -81,4 +82,25 @@ func BulkInsertIssues(ctx context.Context, pool *pgxpool.Pool, issues []types.Is
 	)
 
 	return count, err
+}
+
+func BulkInsertPuzzles(ctx context.Context, pool *pgxpool.Pool, puzzles []types.Puzzle) (int64, error) {
+	if len(puzzles) == 0 {
+		return 0, nil
+	}
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Release()
+
+	return conn.CopyFrom(
+		ctx,
+		pgx.Identifier{"puzzles"},
+		[]string{"_id", "fen", "moves", "rating", "themes", "openingtags"},
+		pgx.CopyFromSlice(len(puzzles), func(i int) ([]any, error) {
+			p := puzzles[i]
+			return []any{p.Id, p.Fen, p.Moves, p.Rating, p.Themes, p.OpeningTags}, nil
+		}),
+	)
 }
