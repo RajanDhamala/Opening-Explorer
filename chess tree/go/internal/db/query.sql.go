@@ -628,6 +628,104 @@ func (q *Queries) GetUserIssues(ctx context.Context, userID int32) ([]Issue, err
 	return items, nil
 }
 
+const getWoodpeakSessionItems = `-- name: GetWoodpeakSessionItems :many
+SELECT 
+    p._id, p.fen, p.moves, p.rating, p.themes, p.openingtags,
+    i.position
+FROM WoodpeakerSetItems i
+JOIN puzzles p ON p._id = i.puzzle_id
+WHERE i.set_id = $1
+ORDER BY i.position
+`
+
+type GetWoodpeakSessionItemsRow struct {
+	ID          string      `json:"_id"`
+	Fen         string      `json:"fen"`
+	Moves       string      `json:"moves"`
+	Rating      int32       `json:"rating"`
+	Themes      []string    `json:"themes"`
+	Openingtags pgtype.Text `json:"openingtags"`
+	Position    int32       `json:"position"`
+}
+
+func (q *Queries) GetWoodpeakSessionItems(ctx context.Context, setID pgtype.UUID) ([]GetWoodpeakSessionItemsRow, error) {
+	rows, err := q.db.Query(ctx, getWoodpeakSessionItems, setID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetWoodpeakSessionItemsRow
+	for rows.Next() {
+		var i GetWoodpeakSessionItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Fen,
+			&i.Moves,
+			&i.Rating,
+			&i.Themes,
+			&i.Openingtags,
+			&i.Position,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getWoodpeakerSessions = `-- name: GetWoodpeakerSessions :many
+SELECT _id, title, totalPuzzles, status, updatedAt, themes, minRating, maxRating, createdAt
+FROM WoodpeakerSet
+WHERE user_id = $1
+ORDER BY createdAt DESC 
+LIMIT 10
+`
+
+type GetWoodpeakerSessionsRow struct {
+	ID           pgtype.UUID        `json:"_id"`
+	Title        string             `json:"title"`
+	Totalpuzzles int32              `json:"totalpuzzles"`
+	Status       string             `json:"status"`
+	Updatedat    pgtype.Timestamptz `json:"updatedat"`
+	Themes       []string           `json:"themes"`
+	Minrating    int32              `json:"minrating"`
+	Maxrating    int32              `json:"maxrating"`
+	Createdat    pgtype.Timestamptz `json:"createdat"`
+}
+
+func (q *Queries) GetWoodpeakerSessions(ctx context.Context, userID int32) ([]GetWoodpeakerSessionsRow, error) {
+	rows, err := q.db.Query(ctx, getWoodpeakerSessions, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetWoodpeakerSessionsRow
+	for rows.Next() {
+		var i GetWoodpeakerSessionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Totalpuzzles,
+			&i.Status,
+			&i.Updatedat,
+			&i.Themes,
+			&i.Minrating,
+			&i.Maxrating,
+			&i.Createdat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getYourGame = `-- name: GetYourGame :many
 SELECT _id, gameurl, whiteusername, blackusername, whiterating, blackrating, playercolor, timeclass, result, issuecount, user_id, createdate FROM games WHERE user_id=$1
 `
@@ -663,6 +761,63 @@ func (q *Queries) GetYourGame(ctx context.Context, userID int32) ([]Game, error)
 		return nil, err
 	}
 	return items, nil
+}
+
+const initWoodpeakerSet = `-- name: InitWoodpeakerSet :one
+INSERT INTO WoodpeakerSet (_id,title,user_id,setNumber,totalPuzzles,minRating,maxRating,themes ) 
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+RETURNING _id, createdAt
+`
+
+type InitWoodpeakerSetParams struct {
+	ID           pgtype.UUID `json:"_id"`
+	Title        string      `json:"title"`
+	UserID       int32       `json:"user_id"`
+	Setnumber    int32       `json:"setnumber"`
+	Totalpuzzles int32       `json:"totalpuzzles"`
+	Minrating    int32       `json:"minrating"`
+	Maxrating    int32       `json:"maxrating"`
+	Themes       []string    `json:"themes"`
+}
+
+type InitWoodpeakerSetRow struct {
+	ID        pgtype.UUID        `json:"_id"`
+	Createdat pgtype.Timestamptz `json:"createdat"`
+}
+
+func (q *Queries) InitWoodpeakerSet(ctx context.Context, arg InitWoodpeakerSetParams) (InitWoodpeakerSetRow, error) {
+	row := q.db.QueryRow(ctx, initWoodpeakerSet,
+		arg.ID,
+		arg.Title,
+		arg.UserID,
+		arg.Setnumber,
+		arg.Totalpuzzles,
+		arg.Minrating,
+		arg.Maxrating,
+		arg.Themes,
+	)
+	var i InitWoodpeakerSetRow
+	err := row.Scan(&i.ID, &i.Createdat)
+	return i, err
+}
+
+const insertWoodpeakerSetItems = `-- name: InsertWoodpeakerSetItems :exec
+INSERT INTO WoodpeakerSetItems (set_id, puzzle_id, position)
+SELECT
+    $1::UUID,
+    puzzle_id,
+    row_number() OVER ()
+FROM unnest($2::TEXT[]) AS puzzle_id
+`
+
+type InsertWoodpeakerSetItemsParams struct {
+	Column1 pgtype.UUID `json:"column_1"`
+	Column2 []string    `json:"column_2"`
+}
+
+func (q *Queries) InsertWoodpeakerSetItems(ctx context.Context, arg InsertWoodpeakerSetItemsParams) error {
+	_, err := q.db.Exec(ctx, insertWoodpeakerSetItems, arg.Column1, arg.Column2)
+	return err
 }
 
 const loginUser = `-- name: LoginUser :one

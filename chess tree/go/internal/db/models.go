@@ -118,3 +118,35 @@ type User struct {
 	Reviewcount  pgtype.Int4 `json:"reviewcount"`
 	Lastreviwed  pgtype.Date `json:"lastreviwed"`
 }
+
+type Woodpeakerset struct {
+	ID           pgtype.UUID        `json:"_id"`
+	Title        string             `json:"title"`
+	UserID       int32              `json:"user_id"`
+	Setnumber    int32              `json:"setnumber"`
+	Totalpuzzles int32              `json:"totalpuzzles"`
+	Minrating    int32              `json:"minrating"`
+	Maxrating    int32              `json:"maxrating"`
+	Themes       []string           `json:"themes"`
+	Status       string             `json:"status"`
+	Createdat    pgtype.Timestamptz `json:"createdat"`
+	Updatedat    pgtype.Timestamptz `json:"updatedat"`
+}
+
+type Woodpeakersetitem struct {
+	SetID    pgtype.UUID `json:"set_id"`
+	PuzzleID string      `json:"puzzle_id"`
+	Position int32       `json:"position"`
+}
+
+type Woodpeakersetresult struct {
+	ID             pgtype.UUID `json:"_id"`
+	SetID          pgtype.UUID `json:"set_id"`
+	Attemptnumber  int32       `json:"attemptnumber"`
+	Totaltimems    int64       `json:"totaltimems"`
+	Solvedclean    int32       `json:"solvedclean"`
+	Solvedonretry  int32       `json:"solvedonretry"`
+	Failed         int32       `json:"failed"`
+	Puzzleattempts []byte      `json:"puzzleattempts"`
+	Timebucket     []byte      `json:"timebucket"`
+}

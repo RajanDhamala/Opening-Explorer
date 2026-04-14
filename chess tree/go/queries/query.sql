@@ -181,3 +181,33 @@ WHERE rating BETWEEN @min_rating AND @max_rating
   )
 ORDER BY RANDOM()
 LIMIT @limit_count;
+
+
+-- name: InitWoodpeakerSet :one
+INSERT INTO WoodpeakerSet (_id,title,user_id,setNumber,totalPuzzles,minRating,maxRating,themes ) 
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+RETURNING _id, createdAt;
+
+-- name: InsertWoodpeakerSetItems :exec
+INSERT INTO WoodpeakerSetItems (set_id, puzzle_id, position)
+SELECT
+    $1::UUID,
+    puzzle_id,
+    row_number() OVER ()
+FROM unnest($2::TEXT[]) AS puzzle_id;
+
+-- name: GetWoodpeakerSessions :many
+SELECT _id, title, totalPuzzles, status, updatedAt, themes, minRating, maxRating, createdAt
+FROM WoodpeakerSet
+WHERE user_id = $1
+ORDER BY createdAt DESC 
+LIMIT 10;
+
+-- name: GetWoodpeakSessionItems :many
+SELECT 
+    p._id, p.fen, p.moves, p.rating, p.themes, p.openingtags,
+    i.position
+FROM WoodpeakerSetItems i
+JOIN puzzles p ON p._id = i.puzzle_id
+WHERE i.set_id = $1
+ORDER BY i.position;

@@ -71,24 +71,57 @@ createdAt DATE DEFAULT CURRENT_DATE
 CREATE INDEX idx_rating ON Puzzles (rating);
 CREATE INDEX idx_themes ON Puzzles USING GIN (themes);
 
-CREATE TABLE PuzzleSessions(
-  _id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id INTEGER NOT NULL REFERENCES Users(_id) ON DELETE CASCADE,  
-  puzzle_id TEXT NOT NULL REFERENCES Puzzles(_id),                  
-  assigned_at DATE DEFAULT CURRENT_DATE,
-  isSolved BOOLEAN DEFAULT FALSE,
-  solved_at DATE,                                                  
-  UNIQUE(user_id, puzzle_id)                                        
+CREATE TABLE WoodpeakerSet (
+
+  _id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL DEFAULT 'Set_1',
+  user_id      INT         NOT NULL REFERENCES Users(_id) ON DELETE CASCADE,
+  setNumber    INT         NOT NULL,
+  totalPuzzles INT         NOT NULL,
+  minRating    INT         NOT NULL,
+  maxRating    INT         NOT NULL,
+  themes       TEXT[]      DEFAULT NULL,
+  status       TEXT        NOT NULL DEFAULT 'started',
+  createdAt    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updatedAt    TIMESTAMPTZ DEFAULT NULL,
+
+  CONSTRAINT status_check CHECK (status IN ('started', 'completed','re-trial'))
 );
 
-CREATE INDEX idx_puzzlesession_user ON PuzzleSessions(user_id);      
-CREATE INDEX idx_puzzlesession_puzzle ON PuzzleSessions(puzzle_id); 
+CREATE TABLE WoodpeakerSetItems (
+  set_id    UUID NOT NULL REFERENCES WoodpeakerSet(_id) ON DELETE CASCADE,
+  puzzle_id TEXT NOT NULL REFERENCES puzzles(_id),
+  position  INT  NOT NULL,
+
+  PRIMARY KEY (set_id, position)   
+);
+
+CREATE INDEX idx_setitems_set ON WoodpeakerSetItems (set_id, position);
+
+CREATE TABLE WoodpeakerSetResult (
+  _id            UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
+  set_id         UUID    NOT NULL REFERENCES WoodpeakerSet(_id) ON DELETE CASCADE,
+  attemptNumber  INT     NOT NULL DEFAULT 1,
+  totalTimeMs    BIGINT  NOT NULL,
+  solvedClean    INT     NOT NULL,
+  solvedOnRetry  INT     NOT NULL,
+  failed         INT     NOT NULL,
+  puzzleAttempts JSONB   NOT NULL,
+  timeBucket     JSONB   NOT NULL,
+
+  CONSTRAINT unique_set_attempt UNIQUE (set_id, attemptNumber)
+);
+CREATE INDEX idx_result_set ON WoodpeakerSetResult (set_id);
 
 -- +goose Down
 
-DROP TABLE IF EXISTS PuzzelSessions;
+DROP TABLE IF EXISTS WoodpeakerSetResult;
+DROP TABLE IF EXISTS WoodpeakerSetItems ;
+DROP TABLE IF EXISTS WoodpeakerSet;
 DROP TABLE IF EXISTS Issues;
 DROP TABLE IF EXISTS Games;
 DROP TABLE IF EXISTS Users;
 DROP TYPE IF EXISTS plan_type;
-DROP TABLE IF EXISTS Puzzles;
+-- DROP TABLE IF EXISTS Puzzles;
+
+
