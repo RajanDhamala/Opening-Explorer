@@ -18,4 +18,5 @@ func WoodpeakerRouter(app *fiber.App, controller *Controllers.Controller) {
 	WoodpeakerRouter.Post("/init", middlewares.UserAuthenticate, controller.CreateWoodpeakerPuzzel)
 	WoodpeakerRouter.Get("/list", middlewares.UserAuthenticate, controller.GetWoodpeakSetList)
 	WoodpeakerRouter.Get("/item/:setId", middlewares.UserAuthenticate, controller.GetWoodpeakSetItem)
+	WoodpeakerRouter.Delete("/delList/:setId", middlewares.UserAuthenticate, controller.DeleteWoodpeakerSet)
 }

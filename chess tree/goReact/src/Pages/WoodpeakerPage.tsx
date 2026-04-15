@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { cn } from "@/lib/utils";
-import { Chessboard } from "react-chessboard";
+import { Chessboard, type PieceDropHandlerArgs, type SquareHandlerArgs } from "react-chessboard";
 import axios from "axios";
 import { Chess, type PieceSymbol, type Square } from "chess.js";
 import {
@@ -20,9 +20,10 @@ import {
   Swords,
   Target,
   ArrowLeft,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 
-// ── Types & Schema ────────────────────────────────────────────────────────────
 
 const THEMES = [
   { id: "fork", label: "Fork" },
@@ -42,13 +43,7 @@ const THEMES = [
 const DIFFICULTIES = [
   { id: "beginner", label: "Beginner", range: "< 1000", min: 0, max: 999 },
   { id: "easy", label: "Easy", range: "1000–1299", min: 1000, max: 1299 },
-  {
-    id: "intermediate",
-    label: "Intermediate",
-    range: "1300–1599",
-    min: 1300,
-    max: 1599,
-  },
+  { id: "intermediate", label: "Intermediate", range: "1300–1599", min: 1300, max: 1599 },
   { id: "hard", label: "Hard", range: "1600–1899", min: 1600, max: 1899 },
   { id: "expert", label: "Expert", range: "1900–2199", min: 1900, max: 2199 },
   { id: "master", label: "Master", range: "2200+", min: 2200, max: 3000 },
@@ -90,18 +85,11 @@ interface PuzzleItem {
   position: number;
 }
 
+type PuzzleFeedback = "idle" | "correct" | "wrong" | "solved";
+
 const normalizeStringArray = (value: unknown): string[] => {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => String(item).trim())
-      .filter(Boolean);
-  }
-  if (typeof value === "string") {
-    return value
-      .split(/\s+/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  if (typeof value === "string") return value.split(/\s+/).map((item) => item.trim()).filter(Boolean);
   return [];
 };
 
@@ -115,30 +103,34 @@ const normalizePuzzle = (value: any): PuzzleItem => ({
   position: Number(value?.position ?? 0),
 });
 
-const parseUciMove = (uci: string) => {
+/**
+ * Parse a UCI move string (e.g. "e2e4", "e7e8q") into chess.js move params.
+ */
+const parseUciMove = (uci: string): { from: Square; to: Square; promotion?: PieceSymbol } | null => {
   const normalized = uci.trim().toLowerCase();
   if (normalized.length < 4) return null;
-
   const from = normalized.slice(0, 2) as Square;
   const to = normalized.slice(2, 4) as Square;
   const promo = normalized[4];
-  const promotion =
-    promo && ["q", "r", "b", "n"].includes(promo)
-      ? (promo as PieceSymbol)
-      : undefined;
-
+  const promotion = promo && ["q", "r", "b", "n"].includes(promo) ? (promo as PieceSymbol) : undefined;
   return { from, to, promotion };
 };
 
-// ── Toggle ────────────────────────────────────────────────────────────────────
+/**
+ * Determine board orientation from FEN.
+ * The FEN's active color is the side TO MOVE — that's the human player's side.
+ * We orient the board so the human plays from the bottom.
+ */
+const getBoardOrientationFromFen = (fen: string): "white" | "black" => {
+  // FEN format: "rnbqkbnr/pppppppp/... w KQkq - 0 1"
+  // The second space-separated token is the active color: 'w' or 'b'
+  const parts = fen.trim().split(" ");
+  const activeColor = parts[1]; // 'w' or 'b'
+  return activeColor === "b" ? "white" : "black";
+};
 
-function Toggle({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
       type="button"
@@ -152,16 +144,12 @@ function Toggle({
       <span
         className={cn(
           "absolute top-[3px] left-[3px] w-4 h-4 rounded-full shadow-sm transition-all duration-200",
-          checked
-            ? "translate-x-[18px] bg-zinc-900"
-            : "translate-x-0 bg-white/40",
+          checked ? "translate-x-[18px] bg-zinc-900" : "translate-x-0 bg-white/40",
         )}
       />
     </button>
   );
 }
-
-// ── Section label ─────────────────────────────────────────────────────────────
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
@@ -171,7 +159,6 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Modal ─────────────────────────────────────────────────────────────────────
 
 interface WoodpeakerModalProps {
   open: boolean;
@@ -179,11 +166,7 @@ interface WoodpeakerModalProps {
   onSuccess?: () => void;
 }
 
-export function WoodpeakerModal({
-  open,
-  onClose,
-  onSuccess,
-}: WoodpeakerModalProps) {
+export function WoodpeakerModal({ open, onClose, onSuccess }: WoodpeakerModalProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -203,35 +186,27 @@ export function WoodpeakerModal({
   const watchedThemes = watch("themes");
   const watchedCount = watch("count");
   const watchedDiff = watch("difficulty");
-  const diffCfg =
-    DIFFICULTIES.find((d) => d.id === watchedDiff) ?? DIFFICULTIES[6];
+  const diffCfg = DIFFICULTIES.find((d) => d.id === watchedDiff) ?? DIFFICULTIES[6];
 
-  // Escape key
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
 
-  // Body scroll lock
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "";
-    return () => {
-      document.body.style.overflow = "";
-    };
+    return () => { document.body.style.overflow = ""; };
   }, [open]);
+  const [title, setTitle] = useState("");
 
   const onSubmit = async (data: FormData) => {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await axios.post(
-        "http://localhost:3030/woodpeaker/init",
-        data,
-        { withCredentials: true },
-      );
+      const res = await axios.post("http://localhost:3030/woodpeaker/init", {
+        ...data, "title": title,
+      }, { withCredentials: true });
       if (res.status === 200 || res.status === 201) {
         onSuccess?.();
         onClose();
@@ -239,50 +214,29 @@ export function WoodpeakerModal({
         throw new Error("Server error");
       }
     } catch (e: any) {
-      setError(
-        e?.response?.data?.message || e.message || "Something went wrong",
-      );
+      setError(e?.response?.data?.message || e.message || "Something went wrong");
     } finally {
       setSubmitting(false);
     }
   };
 
-  // const themeLabel = (id: string) => THEMES.find((t) => t.id === id)?.label;
-
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
-      <div
-        ref={overlayRef}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
-        onClick={onClose}
-      />
-
+      <div ref={overlayRef} className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
       <div className="relative w-full max-w-lg bg-zinc-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-white/5 bg-zinc-900/50">
           <div>
-            <h2 className="text-lg font-semibold text-white tracking-tight">
-              New Woodpecker Set
-            </h2>
-            <p className="text-xs text-white/40 mt-1">
-              Configure your spaced repetition training
-            </p>
+            <h2 className="text-lg font-semibold text-white tracking-tight">New Woodpecker Set</h2>
+            <p className="text-xs text-white/40 mt-1">Configure your spaced repetition training</p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-full text-white/40 hover:text-white hover:bg-white/10 transition-colors"
-          >
+          <button onClick={onClose} className="p-2 rounded-full text-white/40 hover:text-white hover:bg-white/10 transition-colors">
             <X size={18} />
           </button>
         </div>
 
-        {/* Content */}
-        <form
-          onSubmit={handleSubmit(onSubmit)}
-          className="overflow-y-auto flex-1 p-6 space-y-8 custom-scrollbar"
-        >
+        <form onSubmit={handleSubmit(onSubmit)} className="overflow-y-auto flex-1 p-6 space-y-8 custom-scrollbar">
           {error && (
             <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-start gap-3">
               <div className="mt-0.5">⚠️</div>
@@ -290,54 +244,36 @@ export function WoodpeakerModal({
             </div>
           )}
 
-          {/* Quantity */}
           <section>
             <Label>Number of Puzzles</Label>
             <div className="grid grid-cols-4 gap-2">
               {COUNTS.map((c) => {
                 const active = watchedCount === c;
                 return (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setValue("count", c)}
-                    className={cn(
-                      "py-3 rounded-xl text-sm font-medium transition-all duration-200",
-                      active
-                        ? "bg-white text-zinc-900 shadow-md scale-[1.02]"
-                        : "bg-white/5 text-white/60 hover:bg-white/10 hover:text-white border border-transparent hover:border-white/5",
+                  <button key={c} type="button" onClick={() => setValue("count", c)}
+                    className={cn("py-3 rounded-xl text-sm font-medium transition-all duration-200",
+                      active ? "bg-white text-zinc-900 shadow-md scale-[1.02]"
+                        : "bg-white/5 text-white/60 hover:bg-white/10 hover:text-white border border-transparent hover:border-white/5"
                     )}
-                  >
-                    {c}
-                  </button>
+                  >{c}</button>
                 );
               })}
             </div>
           </section>
 
-          {/* Difficulty */}
           <section>
             <div className="flex justify-between items-end mb-3">
-              <p className="text-[10px] font-semibold tracking-[0.15em] uppercase text-white/30 select-none">
-                Difficulty
-              </p>
-              <p className="text-[10px] font-medium text-white/40">
-                Rating: {diffCfg.range}
-              </p>
+              <p className="text-[10px] font-semibold tracking-[0.15em] uppercase text-white/30 select-none">Difficulty</p>
+              <p className="text-[10px] font-medium text-white/40">Rating: {diffCfg.range}</p>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {DIFFICULTIES.map((d) => {
                 const active = watchedDiff === d.id;
                 return (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => setValue("difficulty", d.id)}
-                    className={cn(
-                      "px-3 py-2.5 rounded-xl text-sm transition-all text-left border",
-                      active
-                        ? "bg-zinc-800/80 border-white/20 text-white shadow-inner"
-                        : "bg-transparent border-white/[0.04] text-white/50 hover:bg-white/5 hover:text-white hover:border-white/10",
+                  <button key={d.id} type="button" onClick={() => setValue("difficulty", d.id)}
+                    className={cn("px-3 py-2.5 rounded-xl text-sm transition-all text-left border",
+                      active ? "bg-zinc-800/80 border-white/20 text-white shadow-inner"
+                        : "bg-transparent border-white/[0.04] text-white/50 hover:bg-white/5 hover:text-white hover:border-white/10"
                     )}
                   >
                     <span className="block font-medium">{d.label}</span>
@@ -347,138 +283,67 @@ export function WoodpeakerModal({
             </div>
           </section>
 
-          {/* Themes */}
           <section>
             <div className="flex justify-between items-end mb-3">
-              <p className="text-[10px] font-semibold tracking-[0.15em] uppercase text-white/30 select-none">
-                Themes
-              </p>
-              <button
-                type="button"
-                onClick={() =>
-                  setValue(
-                    "themes",
-                    watchedThemes.length === THEMES.length
-                      ? []
-                      : THEMES.map((t) => t.id),
-                  )
-                }
+              <p className="text-[10px] font-semibold tracking-[0.15em] uppercase text-white/30 select-none">Themes</p>
+              <button type="button"
+                onClick={() => setValue("themes", watchedThemes.length === THEMES.length ? [] : THEMES.map((t) => t.id))}
                 className="text-[10px] uppercase tracking-wider font-semibold text-white/40 hover:text-white transition-colors"
               >
-                {watchedThemes.length === THEMES.length
-                  ? "Clear all"
-                  : "Select all"}
+                {watchedThemes.length === THEMES.length ? "Clear all" : "Select all"}
               </button>
             </div>
-
             <div className="flex flex-wrap gap-2">
               {THEMES.map((t) => {
                 const active = watchedThemes.includes(t.id);
                 return (
-                  <button
-                    key={t.id}
-                    type="button"
+                  <button key={t.id} type="button"
                     onClick={() => {
-                      if (active) {
-                        setValue(
-                          "themes",
-                          watchedThemes.filter((id) => id !== t.id),
-                        );
-                      } else {
-                        setValue("themes", [...watchedThemes, t.id]);
-                      }
+                      if (active) setValue("themes", watchedThemes.filter((id) => id !== t.id));
+                      else setValue("themes", [...watchedThemes, t.id]);
                     }}
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg text-[13px] transition-all border",
-                      active
-                        ? "bg-white/10 border-white/20 text-white"
-                        : "bg-transparent border-white/5 text-white/40 hover:bg-white/5 hover:text-white/80",
+                    className={cn("px-3 py-1.5 rounded-lg text-[13px] transition-all border",
+                      active ? "bg-white/10 border-white/20 text-white"
+                        : "bg-transparent border-white/5 text-white/40 hover:bg-white/5 hover:text-white/80"
                     )}
-                  >
-                    {t.label}
-                  </button>
+                  >{t.label}</button>
                 );
               })}
             </div>
           </section>
 
-          {/* Advanced Toggles */}
           <section className="space-y-1">
+            <input type="text" placeholder="title" typeof="text" className="mb-2 w-full rounded-xl bg-white/5 border border-white/10 text-sm px-4 py-2 text-white/50 focus:outline-none focus:ring-2 focus:ring-white/20 focus:ring-offset-1 focus:ring-offset-zinc-900 transition-colors"
+              value={title} onChange={(e) => setTitle(e.target.value)} />
             <Label>Advanced Settings</Label>
             <div className="bg-white/[0.02] rounded-2xl border border-white/5 p-2">
               {[
-                {
-                  name: "shuffle",
-                  label: "Shuffle puzzles",
-                  sub: "Randomize the order of puzzles in this set",
-                  icon: <Shuffle size={14} className="text-white/40" />,
-                },
-                {
-                  name: "repeatWrong",
-                  label: "Repeat incorrect",
-                  sub: "Force re-solving puzzles you get wrong",
-                  icon: <RotateCcw size={14} className="text-white/40" />,
-                },
-                {
-                  name: "showTimer",
-                  label: "Show timer",
-                  sub: "Display time spent on each puzzle",
-                  icon: <Timer size={14} className="text-white/40" />,
-                },
+                { name: "shuffle", label: "Shuffle puzzles", sub: "Randomize the order of puzzles in this set", icon: <Shuffle size={14} className="text-white/40" /> },
+                { name: "repeatWrong", label: "Repeat incorrect", sub: "Force re-solving puzzles you get wrong", icon: <RotateCcw size={14} className="text-white/40" /> },
+                { name: "showTimer", label: "Show timer", sub: "Display time spent on each puzzle", icon: <Timer size={14} className="text-white/40" /> },
               ].map((opt, i) => (
-                <div
-                  key={opt.name}
-                  className={cn(
-                    "flex items-center justify-between p-3 rounded-xl transition-colors hover:bg-white/[0.02]",
-                    i !== 0 && "border-t border-white/5",
-                  )}
-                >
+                <div key={opt.name} className={cn("flex items-center justify-between p-3 rounded-xl transition-colors hover:bg-white/[0.02]", i !== 0 && "border-t border-white/5")}>
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white/[0.04] rounded-lg">
-                      {opt.icon}
-                    </div>
+                    <div className="p-2 bg-white/[0.04] rounded-lg">{opt.icon}</div>
                     <div className="text-left">
-                      <p className="text-[13px] font-medium text-white/90">
-                        {opt.label}
-                      </p>
+                      <p className="text-[13px] font-medium text-white/90">{opt.label}</p>
                       <p className="text-[11px] text-white/40">{opt.sub}</p>
                     </div>
                   </div>
-                  <Toggle
-                    checked={watch(opt.name as any)}
-                    onChange={(v) => setValue(opt.name as any, v)}
-                  />
+                  <Toggle checked={watch(opt.name as any)} onChange={(v) => setValue(opt.name as any, v)} />
                 </div>
               ))}
             </div>
           </section>
 
-          {/* Footer Actions */}
           <div className="sticky bottom-0 -mx-6 -mb-6 mt-6 px-6 py-4 bg-zinc-900/90 backdrop-blur-md border-t border-white/10 flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-5 py-2 rounded-xl text-[12px] font-semibold text-white/60 hover:text-white hover:bg-white/5 transition-colors"
-            >
+            <button type="button" onClick={onClose} className="px-5 py-2 rounded-xl text-[12px] font-semibold text-white/60 hover:text-white hover:bg-white/5 transition-colors">
               Cancel
             </button>
-
-            <button
-              type="submit"
-              disabled={submitting}
+            <button type="submit" disabled={submitting}
               className="flex items-center gap-2 px-5 py-2 rounded-xl text-[12px] font-semibold bg-white text-zinc-900 hover:bg-white/90 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-black/30"
             >
-              {submitting ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" />
-                  Starting…
-                </>
-              ) : (
-                <>
-                  <Play size={12} className="fill-zinc-900" />
-                  Start
-                </>
-              )}
+              {submitting ? (<><Loader2 size={13} className="animate-spin" />Starting…</>) : (<><Play size={12} className="fill-zinc-900" />Start</>)}
             </button>
           </div>
         </form>
@@ -487,41 +352,490 @@ export function WoodpeakerModal({
   );
 }
 
-// ── Landing Page ──────────────────────────────────────────────────────────────
 
-const SPLASH_FEN =
-  "r1bqk2r/pppp1ppp/2n2n2/1B2p3/2b1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 4";
+const SPLASH_FEN = "r1bqk2r/pppp1ppp/2n2n2/1B2p3/2b1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 4";
+const LICHESS_LIGHT_SQUARE = "#f0d9b5";
+const LICHESS_DARK_SQUARE = "#b58863";
+
+interface PuzzleBoardProps {
+  puzzle: PuzzleItem;
+  onSolved: () => void;
+  onFailed: () => void;
+}
+
+function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
+  // chess.js instance for this puzzle
+  const chessRef = useRef<Chess>(new Chess());
+  const [position, setPosition] = useState<string>("");
+  const [boardOrientation, setBoardOrientation] = useState<"white" | "black">("white");
+  const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
+  const [isUserTurn, setIsUserTurn] = useState(false);
+  const [feedback, setFeedback] = useState<PuzzleFeedback>("idle");
+  const [highlightSquares, setHighlightSquares] = useState<Record<string, React.CSSProperties>>({});
+  const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+  const [clickMoveTargets, setClickMoveTargets] = useState<string[]>([]);
+  const autoMoveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearAutoMove = () => {
+    if (autoMoveRef.current) {
+      clearTimeout(autoMoveRef.current);
+      autoMoveRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    clearAutoMove();
+
+    try {
+      const chess = new Chess();
+      chess.load(puzzle.fen);
+      chessRef.current = chess;
+
+      // Determine orientation: who is to move in the starting FEN = human player
+      const orientation = getBoardOrientationFromFen(puzzle.fen);
+      setBoardOrientation(orientation);
+      setPosition(chess.fen());
+      setCurrentMoveIndex(0);
+      setFeedback("idle");
+      setHighlightSquares({});
+      setSelectedSquare(null);
+      setClickMoveTargets([]);
+
+      // Strategy: play moves[0] automatically, then user plays moves[1], etc.
+      if (puzzle.moves.length === 0) {
+        onSolved();
+        return;
+      }
+
+      // Play the first (opponent) move automatically after a short delay
+      setIsUserTurn(false);
+      autoMoveRef.current = setTimeout(() => {
+        playMoveOnBoard(chess, puzzle.moves[0]);
+        setCurrentMoveIndex(1);
+        setIsUserTurn(true);
+      }, 400);
+    } catch (err) {
+      console.error("Failed to load puzzle FEN:", puzzle.fen, err);
+    }
+
+    return () => clearAutoMove();
+  }, [puzzle._id]); // only re-run when puzzle ID changes
+
+  const playMoveOnBoard = (chess: Chess, uci: string): boolean => {
+    const parsed = parseUciMove(uci);
+    if (!parsed) return false;
+    const result = chess.move(parsed);
+    if (!result) return false;
+    setPosition(chess.fen());
+    return true;
+  };
+
+  const showFeedback = (type: PuzzleFeedback, squares?: Record<string, React.CSSProperties>) => {
+    setFeedback(type);
+    if (squares) setHighlightSquares(squares);
+    else setHighlightSquares({});
+  };
+
+  const clearSelection = useCallback(() => {
+    setSelectedSquare(null);
+    setClickMoveTargets([]);
+  }, []);
+
+  const userColor = boardOrientation === "white" ? "w" : "b";
+
+  const selectSquareForMove = useCallback(
+    (square: string) => {
+      const chess = chessRef.current;
+      const piece = chess.get(square as Square);
+      if (!piece || piece.color !== userColor) {
+        clearSelection();
+        return;
+      }
+
+      const legalTargets = chess.moves({ square: square as Square, verbose: true }).map((move) => move.to);
+      if (legalTargets.length === 0) {
+        clearSelection();
+        return;
+      }
+
+      setSelectedSquare(square);
+      setClickMoveTargets(legalTargets);
+    },
+    [clearSelection, userColor]
+  );
+
+  const squareStyles = useMemo(() => {
+    const moveHintStyles: Record<string, React.CSSProperties> = {};
+
+    if (selectedSquare) {
+      moveHintStyles[selectedSquare] = { backgroundColor: "rgba(59,130,246,0.35)" };
+    }
+    for (const square of clickMoveTargets) {
+      moveHintStyles[square] = {
+        ...(moveHintStyles[square] ?? {}),
+        boxShadow: "inset 0 0 0 4px rgba(59,130,246,0.4)",
+      };
+    }
+
+    return { ...moveHintStyles, ...highlightSquares };
+  }, [selectedSquare, clickMoveTargets, highlightSquares]);
+
+  const handleUserMove = useCallback(
+    (sourceSquare: string, targetSquare: string): boolean => {
+      if (!isUserTurn || feedback === "wrong" || feedback === "solved") return false;
+
+      const expectedUci = puzzle.moves[currentMoveIndex];
+      if (!expectedUci) return false;
+
+      const chess = chessRef.current;
+      const legalTargets = chess.moves({ square: sourceSquare as Square, verbose: true }).map((move) => move.to);
+      if (!legalTargets.includes(targetSquare as Square)) {
+        return false;
+      }
+
+      clearSelection();
+
+      const playedUci = `${sourceSquare}${targetSquare}`.toLowerCase();
+      const expectedKey = expectedUci.slice(0, 4).toLowerCase();
+
+      // Legal but wrong move
+      if (playedUci !== expectedKey) {
+        showFeedback("wrong", {
+          [sourceSquare]: { backgroundColor: "rgba(239,68,68,0.5)" },
+          [targetSquare]: { backgroundColor: "rgba(239,68,68,0.35)" },
+        });
+        // After a brief pause, let them try again (don't advance)
+        setTimeout(() => {
+          setFeedback("idle");
+          setHighlightSquares({});
+        }, 900);
+        onFailed();
+        return false;
+      }
+
+      // Correct move — play it
+      const parsed = parseUciMove(expectedUci);
+      if (!parsed || !chess.move(parsed)) return false;
+
+      setPosition(chess.fen());
+      showFeedback("correct", {
+        [sourceSquare]: { backgroundColor: "rgba(34,197,94,0.45)" },
+        [targetSquare]: { backgroundColor: "rgba(34,197,94,0.45)" },
+      });
+
+      const nextUserMoveIndex = currentMoveIndex + 2; // skip opponent's reply
+
+      // Check if puzzle is done
+      if (currentMoveIndex + 1 >= puzzle.moves.length) {
+        // No more moves — puzzle solved!
+        setTimeout(() => {
+          showFeedback("solved");
+          setIsUserTurn(false);
+          setTimeout(onSolved, 250);
+        }, 250);
+        return true;
+      }
+
+      // Play opponent's response automatically
+      setIsUserTurn(false);
+      const opponentUci = puzzle.moves[currentMoveIndex + 1];
+
+      autoMoveRef.current = setTimeout(() => {
+        setHighlightSquares({});
+        const opponentParsed = parseUciMove(opponentUci);
+        if (opponentParsed) {
+          const opponentResult = chess.move(opponentParsed);
+          if (opponentResult) {
+            setPosition(chess.fen());
+            setHighlightSquares({
+              [opponentResult.from]: { backgroundColor: "rgba(255,200,0,0.35)" },
+              [opponentResult.to]: { backgroundColor: "rgba(255,200,0,0.35)" },
+            });
+          }
+        }
+
+        // Check if there are more user moves
+        if (nextUserMoveIndex >= puzzle.moves.length) {
+          // Puzzle complete after opponent's last move
+          setTimeout(() => {
+            showFeedback("solved");
+            setIsUserTurn(false);
+            setTimeout(onSolved, 250);
+          }, 200);
+          return;
+        }
+
+        setCurrentMoveIndex(nextUserMoveIndex);
+        setIsUserTurn(true);
+        setFeedback("idle");
+      }, 500);
+
+      return true;
+    },
+    [puzzle, currentMoveIndex, isUserTurn, feedback, clearSelection, onSolved, onFailed]
+  );
+
+  const handlePieceDrop = useCallback(
+    ({ sourceSquare, targetSquare }: PieceDropHandlerArgs): boolean => {
+      if (!targetSquare) return false;
+      return handleUserMove(sourceSquare, targetSquare);
+    },
+    [handleUserMove]
+  );
+
+  const handleSquareClick = useCallback(
+    ({ square }: SquareHandlerArgs) => {
+      if (!isUserTurn || feedback === "wrong" || feedback === "solved") return;
+
+      if (!selectedSquare) {
+        selectSquareForMove(square);
+        return;
+      }
+
+      if (square === selectedSquare) {
+        clearSelection();
+        return;
+      }
+
+      if (clickMoveTargets.includes(square)) {
+        handleUserMove(selectedSquare, square);
+        return;
+      }
+
+      selectSquareForMove(square);
+    },
+    [isUserTurn, feedback, selectedSquare, clickMoveTargets, clearSelection, selectSquareForMove, handleUserMove]
+  );
+
+  const totalMoves = Math.ceil((puzzle.moves.length - 1) / 2); // user moves only
+  const completedMoves = Math.floor((currentMoveIndex - 1) / 2);
+
+  return (
+    <div className="flex flex-col gap-3 w-full">
+      {/* Feedback banner */}
+      <div className={cn(
+        "h-8 flex items-center justify-center gap-2 rounded-xl text-sm font-semibold transition-all duration-300",
+        feedback === "correct" && "bg-green-500/15 text-green-400",
+        feedback === "wrong" && "bg-red-500/15 text-red-400",
+        feedback === "solved" && "bg-green-500/20 text-green-300",
+        feedback === "idle" && "bg-white/[0.03] text-white/30",
+      )}>
+        {feedback === "correct" && <><CheckCircle2 size={15} /> Good move!</>}
+        {feedback === "wrong" && <><XCircle size={15} /> Wrong — try again</>}
+        {feedback === "solved" && <><CheckCircle2 size={15} /> Puzzle solved! ✓</>}
+        {feedback === "idle" && (isUserTurn ? "Your turn" : "Opponent thinking…")}
+      </div>
+
+      {/* Board */}
+      <div className="w-full rounded-2xl overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/[0.07]">
+        <div className="w-full aspect-square">
+          <Chessboard
+            options={{
+              position,
+              boardOrientation,
+              onPieceDrop: handlePieceDrop,
+              onSquareClick: handleSquareClick,
+              showAnimations: true,
+              allowDragging: isUserTurn && feedback !== "solved",
+              squareStyles,
+              darkSquareStyle: { backgroundColor: LICHESS_DARK_SQUARE },
+              lightSquareStyle: { backgroundColor: LICHESS_LIGHT_SQUARE },
+              boardStyle: { width: "100%", height: "100%", aspectRatio: "1 / 1" },
+              draggingPieceGhostStyle: { filter: "drop-shadow(0 0 5px rgba(255,255,255,0.7))" },
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Move progress dots */}
+      {totalMoves > 0 && (
+        <div className="flex items-center justify-center gap-1.5 mt-1">
+          {Array.from({ length: totalMoves }).map((_, i) => (
+            <div key={i} className={cn(
+              "w-1.5 h-1.5 rounded-full transition-all",
+              i < completedMoves ? "bg-green-400" : i === completedMoves ? "bg-white/60" : "bg-white/15"
+            )} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+interface SessionViewProps {
+  session: WoodpeakerSession;
+  onBack: () => void;
+}
+
+function SessionView({ session, onBack }: SessionViewProps) {
+  const [puzzles, setPuzzles] = useState<PuzzleItem[]>([]);
+  const [puzzleLoading, setPuzzleLoading] = useState(true);
+  const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState(0);
+  const [score, setScore] = useState({ correct: 0, wrong: 0 });
+
+  useEffect(() => {
+    const load = async () => {
+      setPuzzleLoading(true);
+      try {
+        const { data } = await axios.get(`http://localhost:3030/woodpeaker/item/${session._id}`, { withCredentials: true });
+        if (data?.data) {
+          const normalized = (data.data as any[]).map(normalizePuzzle);
+          setPuzzles(normalized);
+          setCurrentPuzzleIndex(0);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setPuzzleLoading(false);
+      }
+    };
+    load();
+  }, [session._id]);
+
+  const currentPuzzle = puzzles[currentPuzzleIndex];
+
+  const handleSolved = useCallback(() => {
+    setScore((s) => ({ ...s, correct: s.correct + 1 }));
+    setCurrentPuzzleIndex((i) => Math.min(i + 1, puzzles.length - 1));
+  }, [puzzles.length]);
+
+  const handleFailed = useCallback(() => {
+    setScore((s) => ({ ...s, wrong: s.wrong + 1 }));
+  }, []);
+
+  const goTo = (idx: number) => {
+    if (idx < 0 || idx >= puzzles.length) return;
+    setCurrentPuzzleIndex(idx);
+  };
+
+  return (
+    <div className="min-h-screen bg-zinc-950 text-white flex flex-col p-4 md:p-6">
+      {/* Top bar */}
+      <div className="flex items-center justify-between mb-6">
+        <button onClick={onBack} className="flex items-center gap-2 text-white/50 hover:text-white transition-colors">
+          <ArrowLeft size={16} />
+          <span className="text-sm">Back to Sessions</span>
+        </button>
+        <div className="flex items-center gap-4 text-sm">
+          <span className="flex items-center gap-1.5 text-green-400 font-medium">
+            <CheckCircle2 size={14} /> {score.correct}
+          </span>
+          <span className="flex items-center gap-1.5 text-red-400 font-medium">
+            <XCircle size={14} /> {score.wrong}
+          </span>
+          <span className="text-white/40">
+            {currentPuzzleIndex + 1} / {puzzles.length}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 max-w-7xl mx-auto w-full">
+        {puzzleLoading ? (
+          <div className="flex flex-col items-center justify-center py-20">
+            <Loader2 className="animate-spin text-white/50 w-8 h-8 mb-4" />
+            <p className="text-white/50 text-sm">Loading puzzles...</p>
+          </div>
+        ) : !currentPuzzle ? (
+          <div className="text-center text-white/50 py-20">No puzzles found for this session.</div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
+            {/* Board column — takes all available space */}
+            <div className="w-full max-w-[760px] mx-auto lg:mx-0">
+              <PuzzleBoard
+                key={`${currentPuzzle._id}-${currentPuzzleIndex}`}
+                puzzle={currentPuzzle}
+                onSolved={handleSolved}
+                onFailed={handleFailed}
+              />
+            </div>
+
+            {/* Info column */}
+            <div className="flex flex-col gap-5">
+              <div>
+                <h2 className="text-xl font-bold tracking-tight">{session.title || "Woodpecker Session"}</h2>
+                <p className="text-sm text-white/40 mt-1">Puzzle {currentPuzzleIndex + 1} of {puzzles.length}</p>
+              </div>
+
+              {/* Progress bar */}
+              <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-white/60 rounded-full transition-all duration-500"
+                  style={{ width: `${((currentPuzzleIndex) / puzzles.length) * 100}%` }}
+                />
+              </div>
+
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center gap-3">
+                  <Target className="text-white/40" size={18} />
+                  <div>
+                    <p className="text-xs text-white/40 uppercase tracking-wider font-semibold">Rating</p>
+                    <p className="text-sm font-medium">{currentPuzzle.rating}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <Swords className="text-white/40 mt-0.5" size={18} />
+                  <div>
+                    <p className="text-xs text-white/40 uppercase tracking-wider font-semibold mb-1">Themes</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {currentPuzzle.themes?.map((theme) => (
+                        <span key={theme} className="px-2 py-1 bg-white/10 rounded-md text-xs">{theme}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Score summary */}
+                <div className="border-t border-white/5 pt-4 grid grid-cols-2 gap-3">
+                  <div className="bg-green-500/10 rounded-xl p-3 text-center">
+                    <p className="text-2xl font-bold text-green-400">{score.correct}</p>
+                    <p className="text-[11px] text-green-400/70 uppercase tracking-wider">Solved</p>
+                  </div>
+                  <div className="bg-red-500/10 rounded-xl p-3 text-center">
+                    <p className="text-2xl font-bold text-red-400">{score.wrong}</p>
+                    <p className="text-[11px] text-red-400/70 uppercase tracking-wider">Mistakes</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  disabled={currentPuzzleIndex === 0}
+                  onClick={() => goTo(currentPuzzleIndex - 1)}
+                  className="flex-1 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors disabled:opacity-30"
+                >
+                  Previous
+                </button>
+                <button
+                  disabled={currentPuzzleIndex === puzzles.length - 1}
+                  onClick={() => goTo(currentPuzzleIndex + 1)}
+                  className="flex-1 py-3 rounded-xl bg-white text-zinc-900 hover:bg-white/90 text-sm font-semibold transition-colors disabled:opacity-30"
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Landing Page ──────────────────────────────────────────────────────────────
 
 export default function WoodpeakerPage() {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<WoodpeakerSession[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const [activeSession, setActiveSession] = useState<WoodpeakerSession | null>(
-    null,
-  );
-  const [puzzles, setPuzzles] = useState<PuzzleItem[]>([]);
-  const [puzzleLoading, setPuzzleLoading] = useState(false);
-  const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState(0);
-  const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
-  const [isUserTurn, setIsUserTurn] = useState(true);
-  const [position, setPosition] = useState(SPLASH_FEN);
-  const chessRef = useRef(new Chess());
-  const autoMoveTimeoutRef = useRef<number | null>(null);
-  const puzzleIndexRef = useRef(0);
+  const [activeSession, setActiveSession] = useState<WoodpeakerSession | null>(null);
 
   const fetchSessions = async () => {
     setLoading(true);
     try {
-      const { data } = await axios.get(
-        "http://localhost:3030/woodpeaker/list",
-        {
-          withCredentials: true,
-        },
-      );
-      if (data && data.data) {
-        setSessions(data.data);
-      }
+      const { data } = await axios.get("http://localhost:3030/woodpeaker/list", { withCredentials: true });
+      if (data?.data) setSessions(data.data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -529,286 +843,27 @@ export default function WoodpeakerPage() {
     }
   };
 
-  useEffect(() => {
-    fetchSessions();
-  }, []);
-
-  const clearAutoMoveTimeout = () => {
-    if (autoMoveTimeoutRef.current !== null) {
-      window.clearTimeout(autoMoveTimeoutRef.current);
-      autoMoveTimeoutRef.current = null;
-    }
-  };
-
-  const loadPuzzleToBoard = (puzzle: PuzzleItem | undefined) => {
-    if (!puzzle) return;
-
-    try {
-      const chess = new Chess();
-      chess.load(puzzle.fen);
-      chessRef.current = chess;
-      setPosition(chess.fen());
-      setCurrentMoveIndex(0);
-      setIsUserTurn(true);
-    } catch (err) {
-      console.error("Invalid puzzle FEN:", puzzle.fen, err);
-      chessRef.current = new Chess();
-      setPosition(SPLASH_FEN);
-      setCurrentMoveIndex(0);
-      setIsUserTurn(true);
-    }
-  };
-
-  const goToPuzzle = (index: number) => {
-    if (index < 0 || index >= puzzles.length) return;
-    clearAutoMoveTimeout();
-    setCurrentPuzzleIndex(index);
-  };
-
-  const goToNextPuzzle = () => {
-    setCurrentPuzzleIndex((idx) => {
-      if (idx >= puzzles.length - 1) return idx;
-      return idx + 1;
-    });
-  };
-
-  const handleSessionClick = async (session: WoodpeakerSession) => {
-    setActiveSession(session);
-    setPuzzleLoading(true);
-    try {
-      const { data } = await axios.get(
-        `http://localhost:3030/woodpeaker/item/${session._id}`,
-        {
-          withCredentials: true,
-        },
-      );
-      if (data && data.data) {
-        const normalized = (data.data as any[]).map(normalizePuzzle);
-        setPuzzles(normalized);
-        setCurrentPuzzleIndex(0);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setPuzzleLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    puzzleIndexRef.current = currentPuzzleIndex;
-  }, [currentPuzzleIndex]);
-
-  useEffect(() => {
-    const current = puzzles[currentPuzzleIndex];
-    if (!current) return;
-    clearAutoMoveTimeout();
-    loadPuzzleToBoard(current);
-  }, [puzzles, currentPuzzleIndex]);
-
-  useEffect(() => {
-    return () => {
-      clearAutoMoveTimeout();
-    };
-  }, []);
-
-  const currentPuzzle = puzzles[currentPuzzleIndex];
-
-  const handlePieceDrop = ({
-    sourceSquare,
-    targetSquare,
-  }: {
-    sourceSquare: string;
-    targetSquare: string | null;
-  }) => {
-    if (!targetSquare) return false;
-    if (!currentPuzzle || !isUserTurn) return false;
-
-    const expectedMove = currentPuzzle.moves[currentMoveIndex];
-    if (!expectedMove) {
-      goToNextPuzzle();
-      return false;
-    }
-
-    const playedMove = `${sourceSquare}${targetSquare}`.toLowerCase();
-    const expectedKey = expectedMove.slice(0, 4).toLowerCase();
-
-    if (playedMove !== expectedKey) {
-      goToNextPuzzle();
-      return false;
-    }
-
-    const parsedPlayerMove = parseUciMove(expectedMove);
-    if (!parsedPlayerMove || !chessRef.current.move(parsedPlayerMove)) {
-      goToNextPuzzle();
-      return false;
-    }
-
-    setPosition(chessRef.current.fen());
-    const nextMoveIndex = currentMoveIndex + 1;
-
-    if (nextMoveIndex >= currentPuzzle.moves.length) {
-      goToNextPuzzle();
-      return true;
-    }
-
-    setCurrentMoveIndex(nextMoveIndex);
-    setIsUserTurn(false);
-
-    const puzzleAtMoveTime = currentPuzzle;
-    const puzzleIdxAtMoveTime = currentPuzzleIndex;
-
-    autoMoveTimeoutRef.current = window.setTimeout(() => {
-      if (puzzleIndexRef.current !== puzzleIdxAtMoveTime) return;
-
-      const autoUci = puzzleAtMoveTime.moves[nextMoveIndex];
-      const parsedAutoMove = autoUci ? parseUciMove(autoUci) : null;
-
-      if (!parsedAutoMove || !chessRef.current.move(parsedAutoMove)) {
-        goToNextPuzzle();
-        return;
-      }
-
-      setPosition(chessRef.current.fen());
-
-      const userReplyIndex = nextMoveIndex + 1;
-      if (userReplyIndex >= puzzleAtMoveTime.moves.length) {
-        goToNextPuzzle();
-        return;
-      }
-
-      setCurrentMoveIndex(userReplyIndex);
-      setIsUserTurn(true);
-    }, 350);
-
-    return true;
-  };
+  useEffect(() => { fetchSessions(); }, []);
 
   if (activeSession) {
-    return (
-      <div className="min-h-screen bg-zinc-950 text-white flex flex-col p-6">
-        <button
-          onClick={() => setActiveSession(null)}
-          className="flex items-center gap-2 text-white/50 hover:text-white transition-colors w-max mb-6"
-        >
-          <ArrowLeft size={16} />
-          Back to Sessions
-        </button>
-
-        <div className="max-w-4xl mx-auto w-full grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-          {puzzleLoading ? (
-            <div className="col-span-2 flex flex-col items-center justify-center py-20">
-              <Loader2 className="animate-spin text-white/50 w-8 h-8 mb-4" />
-              <p className="text-white/50 text-sm">Loading puzzles...</p>
-            </div>
-          ) : currentPuzzle ? (
-            <>
-              <div className="w-full rounded-2xl overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/[0.07]">
-                <Chessboard
-                  options={{
-                    position,
-                    onPieceDrop: handlePieceDrop,
-                    allowDragging: isUserTurn,
-                    darkSquareStyle: { backgroundColor: "#3d3d3d" },
-                    lightSquareStyle: { backgroundColor: "#a8a29e" },
-                  }}
-                />
-              </div>
-              <div className="flex flex-col gap-6">
-                <div>
-                  <h2 className="text-2xl font-bold tracking-tight">
-                    {activeSession.title || "Woodpecker Session"}
-                  </h2>
-                  <p className="text-sm text-white/40 mt-1">
-                    Puzzle {currentPuzzleIndex + 1} of {puzzles.length}
-                  </p>
-                </div>
-
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <Target className="text-white/40" size={18} />
-                    <div>
-                      <p className="text-xs text-white/40 uppercase tracking-wider font-semibold">
-                        Rating
-                      </p>
-                      <p className="text-sm font-medium">
-                        {currentPuzzle.rating}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-3">
-                    <Swords className="text-white/40 mt-0.5" size={18} />
-                    <div>
-                      <p className="text-xs text-white/40 uppercase tracking-wider font-semibold mb-1">
-                        Themes
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {currentPuzzle.themes?.map((theme) => (
-                          <span
-                            key={theme}
-                            className="px-2 py-1 bg-white/10 rounded-md text-xs"
-                          >
-                            {theme}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    disabled={currentPuzzleIndex === 0}
-                    onClick={() => goToPuzzle(currentPuzzleIndex - 1)}
-                    className="flex-1 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    disabled={currentPuzzleIndex === puzzles.length - 1}
-                    onClick={() => goToPuzzle(currentPuzzleIndex + 1)}
-                    className="flex-1 py-3 rounded-xl bg-white text-zinc-900 hover:bg-white/90 text-sm font-semibold transition-colors disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="col-span-2 text-center text-white/50 py-20">
-              No puzzles found for this session.
-            </div>
-          )}
-        </div>
-      </div>
-    );
+    return <SessionView session={activeSession} onBack={() => setActiveSession(null)} />;
   }
 
   return (
     <div className="min-h-screen bg-zinc-950 flex flex-col items-center pt-20 px-4 pb-12 relative overflow-hidden">
-      {/* ── Subtle noise / grain overlay ── */}
       <div
         aria-hidden
         className="pointer-events-none fixed inset-0 opacity-[0.025]"
-        style={{
-          backgroundImage:
-            "repeating-conic-gradient(#fff 0% 25%, transparent 0% 50%)",
-          backgroundSize: "48px 48px",
-        }}
+        style={{ backgroundImage: "repeating-conic-gradient(#fff 0% 25%, transparent 0% 50%)", backgroundSize: "48px 48px" }}
       />
-
-      {/* ── Ambient glow behind content ── */}
       <div
         aria-hidden
         className="pointer-events-none absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full opacity-[0.03]"
-        style={{
-          background: "radial-gradient(circle, #ffffff 0%, transparent 70%)",
-        }}
+        style={{ background: "radial-gradient(circle, #ffffff 0%, transparent 70%)" }}
       />
 
-      {/* ── Main content ── */}
       <div className="relative z-10 flex flex-col items-center gap-12 w-full max-w-4xl">
-        {/* Header Section */}
+        {/* Header */}
         <div className="w-full flex flex-col md:flex-row items-center justify-between gap-6 bg-white/[0.02] border border-white/[0.05] p-6 rounded-3xl backdrop-blur-sm">
           <div className="flex items-center gap-6">
             <div className="w-24 h-24 rounded-2xl overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/[0.07] shrink-0 hidden sm:block">
@@ -817,25 +872,19 @@ export default function WoodpeakerPage() {
                   position: SPLASH_FEN,
                   allowDragging: false,
                   boardStyle: { width: "96px", height: "96px" },
-                  darkSquareStyle: { backgroundColor: "#3d3d3d" },
-                  lightSquareStyle: { backgroundColor: "#a8a29e" },
+                  darkSquareStyle: { backgroundColor: LICHESS_DARK_SQUARE },
+                  lightSquareStyle: { backgroundColor: LICHESS_LIGHT_SQUARE },
                 }}
               />
             </div>
             <div>
-              <p className="text-[11px] font-semibold tracking-[0.2em] uppercase text-white/30 select-none mb-1">
-                Tactics Training
-              </p>
-              <h1 className="text-3xl font-bold text-white tracking-tight leading-none mb-2">
-                Woodpecker Method
-              </h1>
+              <p className="text-[11px] font-semibold tracking-[0.2em] uppercase text-white/30 select-none mb-1">Tactics Training</p>
+              <h1 className="text-3xl font-bold text-white tracking-tight leading-none mb-2">Woodpecker Method</h1>
               <p className="text-sm text-white/50 leading-relaxed max-w-md">
-                Improve your tactical vision through spaced repetition. Solve
-                sets, learn patterns, and increase your speed.
+                Improve your tactical vision through spaced repetition. Solve sets, learn patterns, and increase your speed.
               </p>
             </div>
           </div>
-
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -846,13 +895,11 @@ export default function WoodpeakerPage() {
           </button>
         </div>
 
-        {/* Sessions List */}
+        {/* Sessions */}
         <div className="w-full space-y-4">
           <div className="flex items-center gap-2 text-white/80 mb-6">
             <ListIcon size={18} />
-            <h2 className="text-lg font-semibold tracking-tight">
-              Your Sessions
-            </h2>
+            <h2 className="text-lg font-semibold tracking-tight">Your Sessions</h2>
           </div>
 
           {loading ? (
@@ -863,16 +910,14 @@ export default function WoodpeakerPage() {
             <div className="text-center py-16 px-4 border border-dashed border-white/10 rounded-3xl bg-white/[0.01]">
               <Target size={32} className="mx-auto text-white/20 mb-3" />
               <p className="text-white/60 font-medium">No active sessions</p>
-              <p className="text-sm text-white/40 mt-1">
-                Create your first training set to get started.
-              </p>
+              <p className="text-sm text-white/40 mt-1">Create your first training set to get started.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {sessions.map((session) => (
                 <div
                   key={session._id}
-                  onClick={() => handleSessionClick(session)}
+                  onClick={() => setActiveSession(session)}
                   className="group bg-white/[0.03] border border-white/[0.05] hover:border-white/[0.15] hover:bg-white/[0.05] rounded-2xl p-5 cursor-pointer transition-all duration-300"
                 >
                   <div className="flex justify-between items-start mb-4">
@@ -883,7 +928,6 @@ export default function WoodpeakerPage() {
                       {session.status}
                     </div>
                   </div>
-
                   <div className="space-y-3 mb-5">
                     <div className="flex items-center gap-2 text-sm text-white/50">
                       <Target size={14} />
@@ -891,31 +935,19 @@ export default function WoodpeakerPage() {
                     </div>
                     <div className="flex items-center gap-2 text-sm text-white/50">
                       <BarChart2 size={14} />
-                      <span>
-                        {session.minrating} - {session.maxrating} Rating
-                      </span>
+                      <span>{session.minrating} - {session.maxrating} Rating</span>
                     </div>
                     <div className="flex items-center gap-2 text-sm text-white/50">
                       <Calendar size={14} />
-                      <span>
-                        {new Date(session.createdat).toLocaleDateString()}
-                      </span>
+                      <span>{new Date(session.createdat).toLocaleDateString()}</span>
                     </div>
                   </div>
-
                   <div className="flex flex-wrap gap-1.5">
                     {session.themes?.slice(0, 3).map((theme) => (
-                      <span
-                        key={theme}
-                        className="px-2 py-0.5 rounded text-[11px] bg-white/[0.05] text-white/40"
-                      >
-                        {theme}
-                      </span>
+                      <span key={theme} className="px-2 py-0.5 rounded text-[11px] bg-white/[0.05] text-white/40">{theme}</span>
                     ))}
                     {session.themes?.length > 3 && (
-                      <span className="px-2 py-0.5 rounded text-[11px] bg-white/[0.05] text-white/40">
-                        +{session.themes.length - 3}
-                      </span>
+                      <span className="px-2 py-0.5 rounded text-[11px] bg-white/[0.05] text-white/40">+{session.themes.length - 3}</span>
                     )}
                   </div>
                 </div>
@@ -925,11 +957,7 @@ export default function WoodpeakerPage() {
         </div>
       </div>
 
-      <WoodpeakerModal
-        open={open}
-        onClose={() => setOpen(false)}
-        onSuccess={fetchSessions}
-      />
+      <WoodpeakerModal open={open} onClose={() => setOpen(false)} onSuccess={fetchSessions} />
     </div>
   );
 }

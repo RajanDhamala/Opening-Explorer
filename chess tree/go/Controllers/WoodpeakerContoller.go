@@ -1,6 +1,7 @@
 package Controllers
 
 import (
+	"database/sql"
 	"fmt"
 	"strconv"
 
@@ -8,6 +9,7 @@ import (
 	// "chess/Types"
 	"chess/Utils"
 	"chess/internal/db"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	// "chess/Database"
@@ -20,6 +22,7 @@ type RegisterWoodpeakerPuzzel struct {
 	Shuffle     bool     `json:"shuffle"`
 	RepeatWrong bool     `json:"repeatWrong"`
 	Themes      []string `json:"themes"`
+	Title       string   `json:"title"`
 }
 
 func (ctrl *Controller) CreateWoodpeakerPuzzel(c *fiber.Ctx) error {
@@ -100,7 +103,7 @@ func (ctrl *Controller) CreateWoodpeakerPuzzel(c *fiber.Ctx) error {
 	}
 	_, initErr := ctrl.queries.InitWoodpeakerSet(c.Context(), db.InitWoodpeakerSetParams{
 		ID:           pgID,
-		Title:        "ranjan sir",
+		Title:        data.Title,
 		UserID:       int32(id),
 		Setnumber:    int32(data.Count),
 		Totalpuzzles: int32(len(puzzleIDs)),
@@ -145,14 +148,6 @@ func (ctrl *Controller) GetWoodpeakSetList(c *fiber.Ctx) error {
 			"error": "invalid user id in token",
 		})
 	}
-
-	// setId := c.Params("setId")
-
-	// if setId == "" {
-	// 	return c.Status(400).JSON(fiber.Map{
-	// 		"error": "invalid query",
-	// 	})
-	// }
 
 	data, err := ctrl.queries.GetWoodpeakerSessions(c.Context(), int32(id))
 	if err != nil {
@@ -205,5 +200,55 @@ func (ctrl *Controller) GetWoodpeakSetItem(c *fiber.Ctx) error {
 	return c.Status(200).JSON(fiber.Map{
 		"message": "succesfully fetched set list",
 		"data":    data,
+	})
+}
+
+func (ctrl *Controller) DeleteWoodpeakerSet(c *fiber.Ctx) error {
+	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
+	if !ok || userClaims == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+
+	id, err := strconv.Atoi(userClaims.ID)
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid user id in token",
+		})
+	}
+
+	_id := c.Params("setId")
+	if _id == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "invalid params",
+		})
+	}
+
+	var pgSetId pgtype.UUID
+	if err := pgSetId.Scan(_id); err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "invalid set id",
+		})
+	}
+
+	errs := ctrl.queries.DeleteWoodpeakerSession(c.Context(), db.DeleteWoodpeakerSessionParams{
+		ID:     pgSetId,
+		UserID: int32(id),
+	})
+
+	if errs != nil {
+		if errs == sql.ErrNoRows {
+			return c.Status(400).JSON(fiber.Map{
+				"error": "asset not found",
+			})
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error": "internal server error",
+		})
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"message": "succesfully deleted Woodpeaker Set",
 	})
 }

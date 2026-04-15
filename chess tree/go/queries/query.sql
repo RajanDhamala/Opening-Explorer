@@ -211,3 +211,6 @@ FROM WoodpeakerSetItems i
 JOIN puzzles p ON p._id = i.puzzle_id
 WHERE i.set_id = $1
 ORDER BY i.position;
+
+-- name: DeleteWoodpeakerSession :exec
+DELETE FROM WoodpeakerSet WHERE _id=$1 AND user_id =$2;

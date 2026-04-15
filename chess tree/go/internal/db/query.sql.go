@@ -270,6 +270,20 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) error 
 	return err
 }
 
+const deleteWoodpeakerSession = `-- name: DeleteWoodpeakerSession :exec
+DELETE FROM WoodpeakerSet WHERE _id=$1 AND user_id =$2
+`
+
+type DeleteWoodpeakerSessionParams struct {
+	ID     pgtype.UUID `json:"_id"`
+	UserID int32       `json:"user_id"`
+}
+
+func (q *Queries) DeleteWoodpeakerSession(ctx context.Context, arg DeleteWoodpeakerSessionParams) error {
+	_, err := q.db.Exec(ctx, deleteWoodpeakerSession, arg.ID, arg.UserID)
+	return err
+}
+
 const getFenEvaluation = `-- name: GetFenEvaluation :many
 SELECT
   fen,
