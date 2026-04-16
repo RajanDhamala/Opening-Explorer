@@ -1,7 +1,17 @@
 
 import { Suspense, useEffect } from "react";
 import "./index.css";
-import { LazyLandingPage, LazyRegisterPage, LazyLoginPage, LazyTestPage, LazyListPage, LazyBoardPage, LazyWoodpeakPage, LazyCustomEvalPage } from "./LazyLoading/LazyLoading";
+import {
+  LazyLandingPage,
+  LazyRegisterPage,
+  LazyLoginPage,
+  LazyTestPage,
+  LazyListPage,
+  LazyBoardPage,
+  LazyWoodpeakPage,
+  LazyWoodpeakerSessionPage,
+  LazyCustomEvalPage,
+} from "./LazyLoading/LazyLoading";
 import { BrowserRouter as Router, Routes, Route, } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import queryClient from "./Utils/QueryConfig.tsx";
@@ -56,6 +66,7 @@ function App() {
             <Route path="/board" element={<LazyBoardPage />} />
 
             <Route path="/wood" element={<LazyWoodpeakPage />} />
+            <Route path="/woodpeaker/:id" element={<LazyWoodpeakerSessionPage />} />
 
             <Route path="*" element={<div className="p-10 text-center text-red-500 font-bold">404 | Page Not Found</div>} />
           </Routes>
