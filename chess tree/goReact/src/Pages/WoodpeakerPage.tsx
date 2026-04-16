@@ -3,7 +3,14 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { cn } from "@/lib/utils";
-import { Chessboard, type PieceDropHandlerArgs, type SquareHandlerArgs } from "react-chessboard";
+import {
+  Chessboard,
+  defaultPieces,
+  type PieceDropHandlerArgs,
+  type PieceHandlerArgs,
+  type PieceRenderObject,
+  type SquareHandlerArgs,
+} from "react-chessboard";
 import axios from "axios";
 import { Chess, type PieceSymbol, type Square } from "chess.js";
 import {
@@ -23,21 +30,62 @@ import {
   CheckCircle2,
   XCircle,
 } from "lucide-react";
+import ClockComponent from "@/Utils/ClockComponnet";
 
 
 const THEMES = [
+  { id: "opening", label: "Opening" },
+  { id: "middlegame", label: "Middlegame" },
+  { id: "endgame", label: "Endgame" },
+  { id: "rookEndgame", label: "Rook endgame" },
+  { id: "bishopEndgame", label: "Bishop endgame" },
+  { id: "pawnEndgame", label: "Pawn endgame" },
+  { id: "knightEndgame", label: "Knight endgame" },
+  { id: "queenEndgame", label: "Queen endgame" },
+  { id: "queenRookEndgame", "label": "Queen & Rook endgame" },
+
+  { id: "discoveredAttack", label: "Discovered attack" },
+  { id: "doubleCheck", label: "Double check" },
   { id: "fork", label: "Fork" },
+  { id: "kingsideAttack", label: "Kingside attack" },
   { id: "pin", label: "Pin" },
+  { id: "queensideAttack", label: "Queenside attack" },
+  { id: "sacrifice", label: "Sacrifice" },
   { id: "skewer", label: "Skewer" },
-  { id: "discoveredAttack", label: "Discovery" },
+  { id: "trappedPiece", label: "Trapped piece" },
+
+  { id: "attraction", label: "Attraction" },
+  { id: "defensiveMove", label: "Defensive move" },
+  { id: "deflection", label: "Deflection" },
+  { id: "intermezzo", label: "Intermezzo" },
+  { id: "xRayAttack", label: "X-Ray attack" },
+
+  { id: "mate", label: "Checkmate" },
   { id: "mateIn1", label: "Mate in 1" },
   { id: "mateIn2", label: "Mate in 2" },
-  { id: "backRankMate", label: "Back rank" },
-  { id: "endgame", label: "Endgame" },
-  { id: "deflection", label: "Deflection" },
-  { id: "sacrifice", label: "Sacrifice" },
-  { id: "zwischenzug", label: "Zwischenzug" },
-  { id: "xRayAttack", label: "X-ray" },
+  { id: "mateIn3", label: "Mate in 3" },
+  { id: "mateIn4", label: "Mate in 4" },
+  { id: "mateIn5", label: "Mate in 5+" },
+
+  { id: "backRankMate", label: "Back rank mate" },
+  { id: "smotheredMate", label: "Smothered mate" },
+
+
+  { id: "castling", label: "Castling" },
+  { id: "underPromotion", label: "Underpromotion" },
+
+  { id: "equality", label: "Equality" },
+  { id: "advantage", label: "Advantage" },
+  { id: "crushing", label: "Crushing" },
+
+  { id: "oneMove", label: "One-move" },
+  { id: "short", label: "Short (2 moves)" },
+  { id: "long", label: "Long (3 moves)" },
+  { id: "veryLong", label: "Very long (4+ moves)" },
+
+  { id: "master", label: "Master games" },
+  { id: "masterVsMaster", label: "Master vs Master" },
+  { id: "superGM", label: "Super GM games" },
 ] as const;
 
 const DIFFICULTIES = [
@@ -364,6 +412,19 @@ interface PuzzleBoardProps {
 }
 
 function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
+  type QueuedPremove = {
+    sourceSquare: string;
+    targetSquare: string;
+    pieceType: string;
+    promotion?: PieceSymbol;
+  };
+  type PendingPromotion = {
+    sourceSquare: string;
+    targetSquare: string;
+    pieceColor: "w" | "b";
+    mode: "move" | "premove";
+  };
+
   // chess.js instance for this puzzle
   const chessRef = useRef<Chess>(new Chess());
   const [position, setPosition] = useState<string>("");
@@ -374,7 +435,12 @@ function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
   const [highlightSquares, setHighlightSquares] = useState<Record<string, React.CSSProperties>>({});
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [clickMoveTargets, setClickMoveTargets] = useState<string[]>([]);
+  const [premoves, setPremoves] = useState<QueuedPremove[]>([]);
+  const premovesRef = useRef<QueuedPremove[]>([]);
+  const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
   const autoMoveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const premoveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isExecutingPremoveRef = useRef(false);
 
   const clearAutoMove = () => {
     if (autoMoveRef.current) {
@@ -383,8 +449,20 @@ function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
     }
   };
 
+  const clearPremoveTimer = useCallback(() => {
+    if (premoveTimerRef.current) {
+      clearTimeout(premoveTimerRef.current);
+      premoveTimerRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     clearAutoMove();
+    clearPremoveTimer();
+    isExecutingPremoveRef.current = false;
+    premovesRef.current = [];
+    setPremoves([]);
+    setPendingPromotion(null);
 
     try {
       const chess = new Chess();
@@ -418,8 +496,12 @@ function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
       console.error("Failed to load puzzle FEN:", puzzle.fen, err);
     }
 
-    return () => clearAutoMove();
-  }, [puzzle._id]); // only re-run when puzzle ID changes
+    return () => {
+      clearAutoMove();
+      clearPremoveTimer();
+      isExecutingPremoveRef.current = false;
+    };
+  }, [puzzle._id, clearPremoveTimer]); // only re-run when puzzle ID changes
 
   const playMoveOnBoard = (chess: Chess, uci: string): boolean => {
     const parsed = parseUciMove(uci);
@@ -442,6 +524,25 @@ function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
   }, []);
 
   const userColor = boardOrientation === "white" ? "w" : "b";
+
+  const clearPremoves = useCallback(() => {
+    clearPremoveTimer();
+    isExecutingPremoveRef.current = false;
+    premovesRef.current = [];
+    setPremoves([]);
+  }, [clearPremoveTimer]);
+
+  const queuePremove = useCallback((move: QueuedPremove) => {
+    premovesRef.current.push(move);
+    setPremoves([...premovesRef.current]);
+  }, []);
+
+  const isPromotionTarget = useCallback((pieceType: string, targetSquare: string) => {
+    if (pieceType[1]?.toLowerCase() !== "p") return false;
+    const rank = targetSquare.slice(-1);
+    const color = pieceType[0];
+    return (color === "w" && rank === "8") || (color === "b" && rank === "1");
+  }, []);
 
   const selectSquareForMove = useCallback(
     (square: string) => {
@@ -466,6 +567,7 @@ function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
 
   const squareStyles = useMemo(() => {
     const moveHintStyles: Record<string, React.CSSProperties> = {};
+    const premoveStyles: Record<string, React.CSSProperties> = {};
 
     if (selectedSquare) {
       moveHintStyles[selectedSquare] = { backgroundColor: "rgba(59,130,246,0.35)" };
@@ -477,26 +579,51 @@ function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
       };
     }
 
-    return { ...moveHintStyles, ...highlightSquares };
-  }, [selectedSquare, clickMoveTargets, highlightSquares]);
+    for (const premove of premoves) {
+      premoveStyles[premove.sourceSquare] = { backgroundColor: "rgba(239,68,68,0.28)" };
+      premoveStyles[premove.targetSquare] = { backgroundColor: "rgba(239,68,68,0.2)" };
+    }
+
+    return { ...moveHintStyles, ...premoveStyles, ...highlightSquares };
+  }, [selectedSquare, clickMoveTargets, premoves, highlightSquares]);
 
   const handleUserMove = useCallback(
-    (sourceSquare: string, targetSquare: string): boolean => {
+    (sourceSquare: string, targetSquare: string, promotion?: PieceSymbol): boolean => {
       if (!isUserTurn || feedback === "wrong" || feedback === "solved") return false;
 
       const expectedUci = puzzle.moves[currentMoveIndex];
       if (!expectedUci) return false;
 
       const chess = chessRef.current;
-      const legalTargets = chess.moves({ square: sourceSquare as Square, verbose: true }).map((move) => move.to);
-      if (!legalTargets.includes(targetSquare as Square)) {
+      const sourcePiece = chess.get(sourceSquare as Square);
+      if (!sourcePiece || sourcePiece.color !== userColor) {
+        return false;
+      }
+      const legalMoves = chess.moves({ square: sourceSquare as Square, verbose: true })
+        .filter((move) => move.to === targetSquare);
+      if (legalMoves.length === 0) return false;
+
+      const requiresPromotion = legalMoves.some((move) => Boolean(move.promotion));
+      if (requiresPromotion && !promotion) {
+        setPendingPromotion({
+          sourceSquare,
+          targetSquare,
+          pieceColor: sourcePiece.color,
+          mode: "move",
+        });
+        clearSelection();
+        return true;
+      }
+      if (promotion && requiresPromotion && !legalMoves.some((move) => move.promotion === promotion)) {
         return false;
       }
 
       clearSelection();
 
-      const playedUci = `${sourceSquare}${targetSquare}`.toLowerCase();
-      const expectedKey = expectedUci.slice(0, 4).toLowerCase();
+      const playedUci = `${sourceSquare}${targetSquare}${promotion ?? ""}`.toLowerCase();
+      const expectedKey = expectedUci.length >= 5
+        ? expectedUci.slice(0, 5).toLowerCase()
+        : expectedUci.slice(0, 4).toLowerCase();
 
       // Legal but wrong move
       if (playedUci !== expectedKey) {
@@ -514,13 +641,17 @@ function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
       }
 
       // Correct move — play it
-      const parsed = parseUciMove(expectedUci);
-      if (!parsed || !chess.move(parsed)) return false;
+      const result = chess.move({
+        from: sourceSquare as Square,
+        to: targetSquare as Square,
+        ...(promotion ? { promotion } : {}),
+      });
+      if (!result) return false;
 
       setPosition(chess.fen());
       showFeedback("correct", {
-        [sourceSquare]: { backgroundColor: "rgba(34,197,94,0.45)" },
-        [targetSquare]: { backgroundColor: "rgba(34,197,94,0.45)" },
+        [result.from]: { backgroundColor: "rgba(34,197,94,0.45)" },
+        [result.to]: { backgroundColor: "rgba(34,197,94,0.45)" },
       });
 
       const nextUserMoveIndex = currentMoveIndex + 2; // skip opponent's reply
@@ -572,20 +703,114 @@ function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
 
       return true;
     },
-    [puzzle, currentMoveIndex, isUserTurn, feedback, clearSelection, onSolved, onFailed]
+    [puzzle, currentMoveIndex, isUserTurn, feedback, clearSelection, onSolved, onFailed, userColor]
+  );
+
+  const tryExecuteQueuedPremove = useCallback(() => {
+    if (!isUserTurn || feedback === "wrong" || feedback === "solved" || pendingPromotion) return;
+    if (premoveTimerRef.current || isExecutingPremoveRef.current) return;
+    if (premovesRef.current.length === 0) return;
+
+    premoveTimerRef.current = setTimeout(() => {
+      premoveTimerRef.current = null;
+      const nextPremove = premovesRef.current[0];
+      if (!nextPremove) return;
+
+      premovesRef.current.splice(0, 1);
+      setPremoves([...premovesRef.current]);
+      isExecutingPremoveRef.current = true;
+
+      const success = handleUserMove(
+        nextPremove.sourceSquare,
+        nextPremove.targetSquare,
+        nextPremove.promotion
+      );
+      isExecutingPremoveRef.current = false;
+
+      if (!success) {
+        clearPremoves();
+      }
+    }, 250);
+  }, [isUserTurn, feedback, pendingPromotion, handleUserMove, clearPremoves]
+  );
+
+  useEffect(() => {
+    tryExecuteQueuedPremove();
+  }, [tryExecuteQueuedPremove, premoves]);
+
+  const onPromotionPieceSelect = useCallback((promotionPiece: PieceSymbol) => {
+    if (!pendingPromotion) return;
+    const promotionContext = pendingPromotion;
+    setPendingPromotion(null);
+
+    if (promotionContext.mode === "premove") {
+      queuePremove({
+        sourceSquare: promotionContext.sourceSquare,
+        targetSquare: promotionContext.targetSquare,
+        pieceType: `${promotionContext.pieceColor}P`,
+        promotion: promotionPiece,
+      });
+      return;
+    }
+
+    const success = handleUserMove(
+      promotionContext.sourceSquare,
+      promotionContext.targetSquare,
+      promotionPiece
+    );
+    if (!success) {
+      clearPremoves();
+    }
+  }, [pendingPromotion, queuePremove, handleUserMove, clearPremoves]
   );
 
   const handlePieceDrop = useCallback(
-    ({ sourceSquare, targetSquare }: PieceDropHandlerArgs): boolean => {
-      if (!targetSquare) return false;
+    ({ sourceSquare, targetSquare, piece }: PieceDropHandlerArgs): boolean => {
+      if (!targetSquare || sourceSquare === targetSquare || pendingPromotion) return false;
+      const pieceColor = piece.pieceType[0] as "w" | "b";
+      if (pieceColor !== userColor) return false;
+
+      if (!isUserTurn || isExecutingPremoveRef.current) {
+        if (isPromotionTarget(piece.pieceType, targetSquare)) {
+          setPendingPromotion({
+            sourceSquare,
+            targetSquare,
+            pieceColor,
+            mode: "premove",
+          });
+        } else {
+          queuePremove({
+            sourceSquare,
+            targetSquare,
+            pieceType: piece.pieceType,
+          });
+        }
+        return true;
+      }
+
       return handleUserMove(sourceSquare, targetSquare);
     },
-    [handleUserMove]
+    [pendingPromotion, userColor, isUserTurn, isPromotionTarget, queuePremove, handleUserMove]
+  );
+
+  const handleSquareRightClick = useCallback(() => {
+    clearPremoves();
+    if (pendingPromotion?.mode === "premove") {
+      setPendingPromotion(null);
+    }
+  }, [clearPremoves, pendingPromotion]
+  );
+
+  const canDragPiece = useCallback(
+    ({ piece }: PieceHandlerArgs) => {
+      return piece.pieceType[0] === userColor;
+    },
+    [userColor]
   );
 
   const handleSquareClick = useCallback(
     ({ square }: SquareHandlerArgs) => {
-      if (!isUserTurn || feedback === "wrong" || feedback === "solved") return;
+      if (!isUserTurn || feedback === "wrong" || feedback === "solved" || pendingPromotion) return;
 
       if (!selectedSquare) {
         selectSquareForMove(square);
@@ -604,7 +829,7 @@ function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
 
       selectSquareForMove(square);
     },
-    [isUserTurn, feedback, selectedSquare, clickMoveTargets, clearSelection, selectSquareForMove, handleUserMove]
+    [isUserTurn, feedback, pendingPromotion, selectedSquare, clickMoveTargets, clearSelection, selectSquareForMove, handleUserMove]
   );
 
   const totalMoves = Math.ceil((puzzle.moves.length - 1) / 2); // user moves only
@@ -628,15 +853,46 @@ function PuzzleBoard({ puzzle, onSolved, onFailed }: PuzzleBoardProps) {
 
       {/* Board */}
       <div className="w-full rounded-2xl overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/[0.07]">
-        <div className="w-full aspect-square">
+        <div className="w-full aspect-square relative">
+          {pendingPromotion && (
+            <div
+              className="absolute inset-0 z-10 bg-black/35 flex items-center justify-center"
+              onClick={() => setPendingPromotion(null)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setPendingPromotion(null);
+              }}
+            >
+              <div
+                className="bg-zinc-900 border border-white/10 rounded-xl p-2 flex items-center gap-1.5 shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {(["q", "r", "n", "b"] as PieceSymbol[]).map((piece) => (
+                  <button
+                    key={piece}
+                    type="button"
+                    className="w-16 h-16 rounded-lg bg-white/5 hover:bg-white/10 text-white flex items-center justify-center"
+                    onClick={() => onPromotionPieceSelect(piece)}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    {defaultPieces[
+                      `${pendingPromotion.pieceColor}${piece.toUpperCase()}` as keyof PieceRenderObject
+                    ]()}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <Chessboard
             options={{
               position,
               boardOrientation,
+              canDragPiece,
               onPieceDrop: handlePieceDrop,
               onSquareClick: handleSquareClick,
+              onSquareRightClick: handleSquareRightClick,
               showAnimations: true,
-              allowDragging: isUserTurn && feedback !== "solved",
+              allowDragging: feedback !== "solved" && !pendingPromotion,
               squareStyles,
               darkSquareStyle: { backgroundColor: LICHESS_DARK_SQUARE },
               lightSquareStyle: { backgroundColor: LICHESS_LIGHT_SQUARE },
@@ -815,7 +1071,11 @@ function SessionView({ session, onBack }: SessionViewProps) {
                   Skip
                 </button>
               </div>
+              <div className="flex">
+                <ClockComponent />
+              </div>
             </div>
+
           </div>
         )}
       </div>
@@ -823,7 +1083,6 @@ function SessionView({ session, onBack }: SessionViewProps) {
   );
 }
 
-// ── Landing Page ──────────────────────────────────────────────────────────────
 
 export default function WoodpeakerPage() {
   const [open, setOpen] = useState(false);
