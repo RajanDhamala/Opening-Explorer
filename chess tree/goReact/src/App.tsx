@@ -11,6 +11,7 @@ import {
   LazyWoodpeakPage,
   LazyWoodpeakerSessionPage,
   LazyCustomEvalPage,
+  LazySwiftChess
 } from "./LazyLoading/LazyLoading";
 import { BrowserRouter as Router, Routes, Route, } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -29,7 +30,7 @@ function App() {
 
     const fetchMe = async () => {
       try {
-        const response = await axios.get("http://localhost:3030/users/me", {
+        const response = await axios.get("htcodetp://localhost:3030/users/me", {
           withCredentials: true,
         });
         if (!isActive) return;
@@ -64,6 +65,8 @@ function App() {
 
             <Route path="/custom" element={<LazyCustomEvalPage />} />
             <Route path="/board" element={<LazyBoardPage />} />
+
+            <Route path="/swift" element={<LazySwiftChess />} />
 
             <Route path="/wood" element={<LazyWoodpeakPage />} />
             <Route path="/woodpeaker/:id" element={<LazyWoodpeakerSessionPage />} />

@@ -7,15 +7,9 @@ import {
   Target,
   XCircle,
 } from "lucide-react";
-import {
-  Chessboard,
-  defaultPieces,
-  type PieceDropHandlerArgs,
-  type PieceHandlerArgs,
-  type PieceRenderObject,
-  type SquareHandlerArgs,
-} from "react-chessboard";
-import { Chess, type PieceSymbol, type Square } from "chess.js";
+import { ChessBoard, type PremoveState } from "swiftchess";
+import "swiftchess/style.css";
+import { Chess, type Color, type Move, type PieceSymbol, type Square } from "chess.js";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
 import { cn } from "@/lib/utils";
@@ -47,6 +41,8 @@ type PuzzleFeedback = "idle" | "correct" | "wrong" | "solved";
 
 const LICHESS_LIGHT_SQUARE = "#f0d9b5";
 const LICHESS_DARK_SQUARE = "#b58863";
+const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+const START_BOARD = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
 
 const normalizeStringArray = (value: unknown): string[] => {
   if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
@@ -54,11 +50,29 @@ const normalizeStringArray = (value: unknown): string[] => {
   return [];
 };
 
+const sanitizeFen = (fen: unknown): string => {
+  const raw = String(fen ?? "").trim();
+  const parts = raw ? raw.split(/\s+/).filter(Boolean) : [];
+  const castling = parts[2];
+  const enPassant = parts[3];
+  const halfmove = parts[4];
+  const fullmove = parts[5];
+  const six = [
+    parts[0] ?? START_BOARD,
+    parts[1] === "b" ? "b" : "w",
+    castling && /^(-|[KQkq]{1,4})$/.test(castling) ? castling : "-",
+    enPassant && /^(-|[a-h][36])$/.test(enPassant) ? enPassant : "-",
+    halfmove && /^\d+$/.test(halfmove) ? halfmove : "0",
+    fullmove && /^[1-9]\d*$/.test(fullmove) ? fullmove : "1",
+  ];
+  return six.join(" ");
+};
+
 const normalizePuzzle = (value: unknown): PuzzleItem => {
   const item = value as Record<string, unknown>;
   return {
     _id: String(item?._id ?? ""),
-    fen: String(item?.fen ?? ""),
+    fen: sanitizeFen(item?.fen),
     moves: normalizeStringArray(item?.moves).map((m) => m.toLowerCase()),
     rating: Number(item?.rating ?? 0),
     themes: normalizeStringArray(item?.themes),
@@ -77,10 +91,19 @@ const parseUciMove = (uci: string): { from: Square; to: Square; promotion?: Piec
   return { from, to, promotion };
 };
 
-const getBoardOrientationFromFen = (fen: string): "white" | "black" => {
-  const parts = fen.trim().split(" ");
+const getUserColorFromFen = (fen: string): Color => {
+  const parts = sanitizeFen(fen).split(" ");
   const activeColor = parts[1];
-  return activeColor === "b" ? "white" : "black";
+  return activeColor === "b" ? "w" : "b";
+};
+
+const getExpectedUciKey = (uci: string) => {
+  const normalized = uci.trim().toLowerCase();
+  return normalized.length >= 5 ? normalized.slice(0, 5) : normalized.slice(0, 4);
+};
+
+const getMoveUciKey = (from: string, to: string, promotion?: string) => {
+  return `${from}${to}${promotion ?? ""}`.toLowerCase();
 };
 
 interface PuzzleBoardProps {
@@ -88,37 +111,23 @@ interface PuzzleBoardProps {
   onSolved: () => void;
   onFailed: () => void;
   onUserMoveStart?: () => void;
+  onPuzzleReady?: () => void;
+  initialMoveDelay?: number;
 }
 
-function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart }: PuzzleBoardProps) {
-  type QueuedPremove = {
-    sourceSquare: string;
-    targetSquare: string;
-    pieceType: string;
-    promotion?: PieceSymbol;
-  };
-  type PendingPromotion = {
-    sourceSquare: string;
-    targetSquare: string;
-    pieceColor: "w" | "b";
-    mode: "move" | "premove";
-  };
-
+function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart, onPuzzleReady, initialMoveDelay = 150 }: PuzzleBoardProps) {
   const chessRef = useRef<Chess>(new Chess());
-  const [position, setPosition] = useState<string>("");
-  const [boardOrientation, setBoardOrientation] = useState<"white" | "black">("white");
+  const [position, setPosition] = useState<string>(START_FEN);
   const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
   const [isUserTurn, setIsUserTurn] = useState(false);
   const [feedback, setFeedback] = useState<PuzzleFeedback>("idle");
-  const [highlightSquares, setHighlightSquares] = useState<Record<string, React.CSSProperties>>({});
-  const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
-  const [clickMoveTargets, setClickMoveTargets] = useState<string[]>([]);
-  const [premoves, setPremoves] = useState<QueuedPremove[]>([]);
-  const premovesRef = useRef<QueuedPremove[]>([]);
-  const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
+  const [premoves, setPremoves] = useState<PremoveState[]>([]);
+  const [isInputLocked, setIsInputLocked] = useState(false);
+  const [boardVisible, setBoardVisible] = useState(false);
   const autoMoveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const premoveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isExecutingPremoveRef = useRef(false);
+  const feedbackResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const readyRafOneRef = useRef<number | null>(null);
+  const readyRafTwoRef = useRef<number | null>(null);
 
   const clearAutoMove = () => {
     if (autoMoveRef.current) {
@@ -127,39 +136,64 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart }: PuzzleBoar
     }
   };
 
-
-
-
-  const clearPremoveTimer = useCallback(() => {
-    if (premoveTimerRef.current) {
-      clearTimeout(premoveTimerRef.current);
-      premoveTimerRef.current = null;
+  const clearFeedbackReset = useCallback(() => {
+    if (feedbackResetRef.current) {
+      clearTimeout(feedbackResetRef.current);
+      feedbackResetRef.current = null;
     }
   }, []);
 
-  useEffect(() => {
-    clearAutoMove();
-    clearPremoveTimer();
-    isExecutingPremoveRef.current = false;
-    premovesRef.current = [];
+  const clearPremoves = useCallback(() => {
     setPremoves([]);
-    setPendingPromotion(null);
+  }, []);
 
+  const clearReadyRafs = useCallback(() => {
+    if (readyRafOneRef.current !== null) {
+      cancelAnimationFrame(readyRafOneRef.current);
+      readyRafOneRef.current = null;
+    }
+    if (readyRafTwoRef.current !== null) {
+      cancelAnimationFrame(readyRafTwoRef.current);
+      readyRafTwoRef.current = null;
+    }
+  }, []);
+
+  const notifyPuzzleReadyAfterPaint = useCallback(() => {
+    clearReadyRafs();
+    readyRafOneRef.current = requestAnimationFrame(() => {
+      readyRafOneRef.current = null;
+      readyRafTwoRef.current = requestAnimationFrame(() => {
+        readyRafTwoRef.current = null;
+        setBoardVisible(true);
+        onPuzzleReady?.();
+      });
+    });
+  }, [clearReadyRafs, onPuzzleReady]);
+
+  const clearPuzzleTimers = useCallback(() => {
+    clearAutoMove();
+    clearFeedbackReset();
+    clearReadyRafs();
+  }, [clearFeedbackReset, clearReadyRafs]);
+
+  const userColor = useMemo(() => getUserColorFromFen(puzzle.fen), [puzzle.fen]);
+
+  useEffect(() => {
+    clearPuzzleTimers();
+    clearPremoves();
+    setIsInputLocked(false);
+    setBoardVisible(false);
     try {
       const chess = new Chess();
-      chess.load(puzzle.fen);
+      chess.load(sanitizeFen(puzzle.fen));
       chessRef.current = chess;
 
-      const orientation = getBoardOrientationFromFen(puzzle.fen);
-      setBoardOrientation(orientation);
       setPosition(chess.fen());
       setCurrentMoveIndex(0);
       setFeedback("idle");
-      setHighlightSquares({});
-      setSelectedSquare(null);
-      setClickMoveTargets([]);
 
       if (puzzle.moves.length === 0) {
+        notifyPuzzleReadyAfterPaint();
         onSolved();
         return;
       }
@@ -169,17 +203,19 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart }: PuzzleBoar
         playMoveOnBoard(chess, puzzle.moves[0]);
         setCurrentMoveIndex(1);
         setIsUserTurn(true);
-      }, 400);
+        setFeedback("idle");
+        notifyPuzzleReadyAfterPaint();
+      }, initialMoveDelay);
     } catch (err) {
       console.error("Failed to load puzzle FEN:", puzzle.fen, err);
+      setBoardVisible(true);
+      notifyPuzzleReadyAfterPaint();
     }
 
     return () => {
-      clearAutoMove();
-      clearPremoveTimer();
-      isExecutingPremoveRef.current = false;
+      clearPuzzleTimers();
     };
-  }, [puzzle._id, clearPremoveTimer, onSolved, puzzle.fen, puzzle.moves]);
+  }, [clearPremoves, clearPuzzleTimers, notifyPuzzleReadyAfterPaint, onSolved, puzzle._id, puzzle.fen, puzzle.moves, initialMoveDelay]);
 
   const playMoveOnBoard = (chess: Chess, uci: string): boolean => {
     const parsed = parseUciMove(uci);
@@ -190,318 +226,108 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart }: PuzzleBoar
     return true;
   };
 
-  const showFeedback = (type: PuzzleFeedback, squares?: Record<string, React.CSSProperties>) => {
+  const showFeedback = useCallback((type: PuzzleFeedback) => {
     setFeedback(type);
-    if (squares) setHighlightSquares(squares);
-    else setHighlightSquares({});
-  };
-
-  const clearSelection = useCallback(() => {
-    setSelectedSquare(null);
-    setClickMoveTargets([]);
   }, []);
 
-  const userColor = boardOrientation === "white" ? "w" : "b";
+  const handleWrongMove = useCallback(() => {
+    showFeedback("wrong");
+    setIsInputLocked(true);
+    onFailed();
+    clearPremoves();
+    clearFeedbackReset();
+    feedbackResetRef.current = setTimeout(() => {
+      setFeedback("idle");
+      setIsInputLocked(false);
+      feedbackResetRef.current = null;
+    }, 900);
+  }, [clearFeedbackReset, clearPremoves, onFailed, showFeedback]);
 
-  const clearPremoves = useCallback(() => {
-    clearPremoveTimer();
-    isExecutingPremoveRef.current = false;
-    premovesRef.current = [];
-    setPremoves([]);
-  }, [clearPremoveTimer]);
-
-  const queuePremove = useCallback((move: QueuedPremove) => {
-    premovesRef.current.push(move);
-    setPremoves([...premovesRef.current]);
-  }, []);
-
-  const isPromotionTarget = useCallback((pieceType: string, targetSquare: string) => {
-    if (pieceType[1]?.toLowerCase() !== "p") return false;
-    const rank = targetSquare.slice(-1);
-    const color = pieceType[0];
-    return (color === "w" && rank === "8") || (color === "b" && rank === "1");
-  }, []);
-
-  const selectSquareForMove = useCallback(
-    (square: string) => {
-      const chess = chessRef.current;
-      const piece = chess.get(square as Square);
-      if (!piece || piece.color !== userColor) {
-        clearSelection();
-        return;
-      }
-
-      const legalTargets = chess.moves({ square: square as Square, verbose: true }).map((move) => move.to);
-      if (legalTargets.length === 0) {
-        clearSelection();
-        return;
-      }
-
-      setSelectedSquare(square);
-      setClickMoveTargets(legalTargets);
-    },
-    [clearSelection, userColor]
-  );
-
-  const squareStyles = useMemo(() => {
-    const moveHintStyles: Record<string, React.CSSProperties> = {};
-    const premoveStyles: Record<string, React.CSSProperties> = {};
-
-    if (selectedSquare) {
-      moveHintStyles[selectedSquare] = { backgroundColor: "rgba(59,130,246,0.35)" };
-    }
-    for (const square of clickMoveTargets) {
-      moveHintStyles[square] = {
-        ...(moveHintStyles[square] ?? {}),
-        boxShadow: "inset 0 0 0 4px rgba(59,130,246,0.4)",
-      };
+  const handleBoardMove = useCallback((move: Move) => {
+    if (feedback === "solved") {
+      chessRef.current.undo();
+      setPosition(chessRef.current.fen());
+      return;
     }
 
-    for (const premove of premoves) {
-      premoveStyles[premove.sourceSquare] = { backgroundColor: "rgba(239,68,68,0.28)" };
-      premoveStyles[premove.targetSquare] = { backgroundColor: "rgba(239,68,68,0.2)" };
+    const expectedUci = puzzle.moves[currentMoveIndex];
+    if (!expectedUci || isInputLocked) {
+      chessRef.current.undo();
+      setPosition(chessRef.current.fen());
+      return;
     }
 
-    return { ...moveHintStyles, ...premoveStyles, ...highlightSquares };
-  }, [selectedSquare, clickMoveTargets, premoves, highlightSquares]);
+    const playedUciKey = getMoveUciKey(move.from, move.to, move.promotion);
+    const expectedUciKey = getExpectedUciKey(expectedUci);
+    if (playedUciKey !== expectedUciKey) {
+      chessRef.current.undo();
+      setPosition(chessRef.current.fen());
+      handleWrongMove();
+      return;
+    }
 
-  const handleUserMove = useCallback(
-    (sourceSquare: string, targetSquare: string, promotion?: PieceSymbol): boolean => {
-      if (!isUserTurn || feedback === "wrong" || feedback === "solved") return false;
+    onUserMoveStart?.();
+    showFeedback("correct");
+    clearPremoves();
 
-      const expectedUci = puzzle.moves[currentMoveIndex];
-      if (!expectedUci) return false;
+    const nextUserMoveIndex = currentMoveIndex + 2;
+    if (currentMoveIndex + 1 >= puzzle.moves.length) {
+      setIsUserTurn(false);
+      setIsInputLocked(true);
+      setTimeout(() => {
+        showFeedback("solved");
+        setTimeout(onSolved, 250);
+      }, 250);
+      return;
+    }
 
-      const chess = chessRef.current;
-      const sourcePiece = chess.get(sourceSquare as Square);
-      if (!sourcePiece || sourcePiece.color !== userColor) {
-        return false;
-      }
-      const legalMoves = chess.moves({ square: sourceSquare as Square, verbose: true })
-        .filter((move) => move.to === targetSquare);
-      if (legalMoves.length === 0) return false;
-      onUserMoveStart?.();
-
-      const requiresPromotion = legalMoves.some((move) => Boolean(move.promotion));
-      if (requiresPromotion && !promotion) {
-        setPendingPromotion({
-          sourceSquare,
-          targetSquare,
-          pieceColor: sourcePiece.color,
-          mode: "move",
-        });
-        clearSelection();
-        return true;
-      }
-      if (promotion && requiresPromotion && !legalMoves.some((move) => move.promotion === promotion)) {
-        return false;
-      }
-
-      clearSelection();
-
-      const playedUci = `${sourceSquare}${targetSquare}${promotion ?? ""}`.toLowerCase();
-      const expectedKey = expectedUci.length >= 5
-        ? expectedUci.slice(0, 5).toLowerCase()
-        : expectedUci.slice(0, 4).toLowerCase();
-
-      if (playedUci !== expectedKey) {
-        showFeedback("wrong", {
-          [sourceSquare]: { backgroundColor: "rgba(239,68,68,0.5)" },
-          [targetSquare]: { backgroundColor: "rgba(239,68,68,0.35)" },
-        });
-        setTimeout(() => {
-          setFeedback("idle");
-          setHighlightSquares({});
-        }, 900);
-        onFailed();
-        return false;
+    setIsUserTurn(false);
+    const opponentUci = puzzle.moves[currentMoveIndex + 1];
+    autoMoveRef.current = setTimeout(() => {
+      const opponentParsed = parseUciMove(opponentUci);
+      if (opponentParsed) {
+        const result = chessRef.current.move(opponentParsed);
+        if (result) {
+          setPosition(chessRef.current.fen());
+        }
       }
 
-      const result = chess.move({
-        from: sourceSquare as Square,
-        to: targetSquare as Square,
-        ...(promotion ? { promotion } : {}),
-      });
-      if (!result) return false;
-
-      setPosition(chess.fen());
-      showFeedback("correct", {
-        [result.from]: { backgroundColor: "rgba(34,197,94,0.45)" },
-        [result.to]: { backgroundColor: "rgba(34,197,94,0.45)" },
-      });
-
-      const nextUserMoveIndex = currentMoveIndex + 2;
-
-      if (currentMoveIndex + 1 >= puzzle.moves.length) {
+      if (nextUserMoveIndex >= puzzle.moves.length) {
+        setIsInputLocked(true);
         setTimeout(() => {
           showFeedback("solved");
           setIsUserTurn(false);
           setTimeout(onSolved, 250);
-        }, 250);
-        return true;
-      }
-
-      setIsUserTurn(false);
-      const opponentUci = puzzle.moves[currentMoveIndex + 1];
-
-      autoMoveRef.current = setTimeout(() => {
-        setHighlightSquares({});
-        const opponentParsed = parseUciMove(opponentUci);
-        if (opponentParsed) {
-          const opponentResult = chess.move(opponentParsed);
-          if (opponentResult) {
-            setPosition(chess.fen());
-            setHighlightSquares({
-              [opponentResult.from]: { backgroundColor: "rgba(255,200,0,0.35)" },
-              [opponentResult.to]: { backgroundColor: "rgba(255,200,0,0.35)" },
-            });
-          }
-        }
-
-        if (nextUserMoveIndex >= puzzle.moves.length) {
-          setTimeout(() => {
-            showFeedback("solved");
-            setIsUserTurn(false);
-            setTimeout(onSolved, 250);
-          }, 200);
-          return;
-        }
-
-        setCurrentMoveIndex(nextUserMoveIndex);
-        setIsUserTurn(true);
-        setFeedback("idle");
-      }, 500);
-
-      return true;
-    },
-    [puzzle, currentMoveIndex, isUserTurn, feedback, clearSelection, onSolved, onFailed, onUserMoveStart, userColor]
-  );
-
-  const tryExecuteQueuedPremove = useCallback(() => {
-    if (!isUserTurn || feedback === "wrong" || feedback === "solved" || pendingPromotion) return;
-    if (premoveTimerRef.current || isExecutingPremoveRef.current) return;
-    if (premovesRef.current.length === 0) return;
-
-    premoveTimerRef.current = setTimeout(() => {
-      premoveTimerRef.current = null;
-      const nextPremove = premovesRef.current[0];
-      if (!nextPremove) return;
-
-      premovesRef.current.splice(0, 1);
-      setPremoves([...premovesRef.current]);
-      isExecutingPremoveRef.current = true;
-
-      const success = handleUserMove(
-        nextPremove.sourceSquare,
-        nextPremove.targetSquare,
-        nextPremove.promotion
-      );
-      isExecutingPremoveRef.current = false;
-
-      if (!success) {
-        clearPremoves();
-      }
-    }, 250);
-  }, [isUserTurn, feedback, pendingPromotion, handleUserMove, clearPremoves]
-  );
-
-  useEffect(() => {
-    tryExecuteQueuedPremove();
-  }, [tryExecuteQueuedPremove, premoves]);
-
-  const onPromotionPieceSelect = useCallback((promotionPiece: PieceSymbol) => {
-    if (!pendingPromotion) return;
-    const promotionContext = pendingPromotion;
-    setPendingPromotion(null);
-
-    if (promotionContext.mode === "premove") {
-      queuePremove({
-        sourceSquare: promotionContext.sourceSquare,
-        targetSquare: promotionContext.targetSquare,
-        pieceType: `${promotionContext.pieceColor}P`,
-        promotion: promotionPiece,
-      });
-      return;
-    }
-
-    const success = handleUserMove(
-      promotionContext.sourceSquare,
-      promotionContext.targetSquare,
-      promotionPiece
-    );
-    if (!success) {
-      clearPremoves();
-    }
-  }, [pendingPromotion, queuePremove, handleUserMove, clearPremoves]
-  );
-
-  const handlePieceDrop = useCallback(
-    ({ sourceSquare, targetSquare, piece }: PieceDropHandlerArgs): boolean => {
-      if (!targetSquare || sourceSquare === targetSquare || pendingPromotion) return false;
-      const pieceColor = piece.pieceType[0] as "w" | "b";
-      if (pieceColor !== userColor) return false;
-
-      if (!isUserTurn || isExecutingPremoveRef.current) {
-        if (isPromotionTarget(piece.pieceType, targetSquare)) {
-          setPendingPromotion({
-            sourceSquare,
-            targetSquare,
-            pieceColor,
-            mode: "premove",
-          });
-        } else {
-          queuePremove({
-            sourceSquare,
-            targetSquare,
-            pieceType: piece.pieceType,
-          });
-        }
-        return true;
-      }
-
-      return handleUserMove(sourceSquare, targetSquare);
-    },
-    [pendingPromotion, userColor, isUserTurn, isPromotionTarget, queuePremove, handleUserMove]
-  );
-
-  const handleSquareRightClick = useCallback(() => {
-    clearPremoves();
-    if (pendingPromotion?.mode === "premove") {
-      setPendingPromotion(null);
-    }
-  }, [clearPremoves, pendingPromotion]
-  );
-
-  const canDragPiece = useCallback(
-    ({ piece }: PieceHandlerArgs) => {
-      return piece.pieceType[0] === userColor;
-    },
-    [userColor]
-  );
-
-  const handleSquareClick = useCallback(
-    ({ square }: SquareHandlerArgs) => {
-      if (!isUserTurn || feedback === "wrong" || feedback === "solved" || pendingPromotion) return;
-
-      if (!selectedSquare) {
-        selectSquareForMove(square);
+        }, 200);
         return;
       }
 
-      if (square === selectedSquare) {
-        clearSelection();
-        return;
-      }
+      setCurrentMoveIndex(nextUserMoveIndex);
+      setIsUserTurn(true);
+      setFeedback("idle");
+    }, 500);
+  }, [
+    clearPremoves,
+    currentMoveIndex,
+    feedback,
+    handleWrongMove,
+    isInputLocked,
+    isUserTurn,
+    onSolved,
+    onUserMoveStart,
+    puzzle.moves,
+    showFeedback,
+  ]);
 
-      if (clickMoveTargets.includes(square)) {
-        handleUserMove(selectedSquare, square);
-        return;
-      }
+  const canQueuePremove = useCallback(({ premove: _premove }: { premove: PremoveState }) => {
+    if (feedback === "solved" || isInputLocked || isUserTurn) return false;
+    return true;
+  }, [feedback, isInputLocked, isUserTurn]);
 
-      selectSquareForMove(square);
-    },
-    [isUserTurn, feedback, pendingPromotion, selectedSquare, clickMoveTargets, clearSelection, selectSquareForMove, handleUserMove]
-  );
+  const boardPlayerColor: Color = isInputLocked && feedback !== "idle"
+    ? (userColor === "w" ? "b" : "w")
+    : userColor;
+  const boardFlipped = userColor === "b";
 
   const totalMoves = Math.ceil((puzzle.moves.length - 1) / 2);
   const completedMoves = Math.floor((currentMoveIndex - 1) / 2);
@@ -522,52 +348,28 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart }: PuzzleBoar
       </div>
 
       <div className="w-full rounded-2xl overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/[0.07]">
-        <div className="w-full aspect-square relative">
-          {pendingPromotion && (
-            <div
-              className="absolute inset-0 z-10 bg-black/35 flex items-center justify-center"
-              onClick={() => setPendingPromotion(null)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setPendingPromotion(null);
-              }}
-            >
-              <div
-                className="bg-zinc-900 border border-white/10 rounded-xl p-2 flex items-center gap-1.5 shadow-2xl"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {(["q", "r", "n", "b"] as PieceSymbol[]).map((piece) => (
-                  <button
-                    key={piece}
-                    type="button"
-                    className="w-16 h-16 rounded-lg bg-white/5 hover:bg-white/10 text-white flex items-center justify-center"
-                    onClick={() => onPromotionPieceSelect(piece)}
-                    onContextMenu={(e) => e.preventDefault()}
-                  >
-                    {defaultPieces[
-                      `${pendingPromotion.pieceColor}${piece.toUpperCase()}` as keyof PieceRenderObject
-                    ]()}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <Chessboard
-            options={{
-              position,
-              boardOrientation,
-              canDragPiece,
-              onPieceDrop: handlePieceDrop,
-              onSquareClick: handleSquareClick,
-              onSquareRightClick: handleSquareRightClick,
-              showAnimations: true,
-              allowDragging: feedback !== "solved" && !pendingPromotion,
-              squareStyles,
-              darkSquareStyle: { backgroundColor: LICHESS_DARK_SQUARE },
-              lightSquareStyle: { backgroundColor: LICHESS_LIGHT_SQUARE },
-              boardStyle: { width: "100%", height: "100%", aspectRatio: "1 / 1" },
-              draggingPieceGhostStyle: { filter: "drop-shadow(0 0 5px rgba(255,255,255,0.7))" },
+        <div className="w-full aspect-square">
+          <ChessBoard
+            chess={chessRef.current}
+            position={position}
+            onPositionChange={setPosition}
+            onMove={handleBoardMove}
+            playerColor={boardPlayerColor}
+            flipped={boardFlipped}
+            premoves={premoves}
+            onPremovesChange={setPremoves}
+            canQueuePremove={canQueuePremove}
+            boardThemePreset="chessComClassic"
+            boardTheme={{
+              light: LICHESS_LIGHT_SQUARE,
+              dark: LICHESS_DARK_SQUARE,
             }}
+            enableSounds={true}
+            fillContainer={true}
+            className={cn(
+              "w-full h-full transition-opacity duration-100",
+              boardVisible ? "opacity-100" : "opacity-0"
+            )}
           />
         </div>
       </div>
@@ -600,6 +402,7 @@ export default function WoodpeakerSessionPage() {
   const [score, setScore] = useState({ correct: 0, wrong: 0 });
   const [clockRunning, setClockRunning] = useState(false);
   const [clockResetToken, setClockResetToken] = useState(0);
+  const [boardTransitioning, setBoardTransitioning] = useState(false);
 
   const clockElapsedRef = useRef(0);
   const timeBucketsRef = useRef<number[]>([]);
@@ -643,6 +446,7 @@ export default function WoodpeakerSessionPage() {
       sessionStartedRef.current = false;
       setClockResetToken((value) => value + 1);
       setScore({ correct: 0, wrong: 0 });
+      setBoardTransitioning(true);
 
       try {
         const { data } = await axios.get(`http://localhost:3030/woodpeaker/item/${sessionId}`, { withCredentials: true });
@@ -652,6 +456,7 @@ export default function WoodpeakerSessionPage() {
 
         setPuzzles(normalized);
         setCurrentPuzzleIndex(0);
+        setBoardTransitioning(normalized.length > 0);
         if (normalized.length === 0) setClockRunning(false);
       } catch (err) {
         console.error(err);
@@ -680,7 +485,10 @@ export default function WoodpeakerSessionPage() {
   const sendBucketToBackend = useCallback(async (bucket: number[]) => {
     if (bucketSubmittedRef.current || bucket.length === 0) return;
     try {
-      await axios.post("http://localhost:3030/woodpeaker/buckt", bucket, { withCredentials: true });
+      await axios.post("http://localhost:3030/woodpeaker/buckt", {
+        bucket,
+        sessionId,
+      }, { withCredentials: true });
       bucketSubmittedRef.current = true;
     } catch (err) {
       console.error(err);
@@ -702,11 +510,22 @@ export default function WoodpeakerSessionPage() {
       return;
     }
 
-    setCurrentPuzzleIndex(nextIndex);
+    // Step 1: paint skeleton first
+    setBoardTransitioning(true);
+    // Step 2: only mount new PuzzleBoard after skeleton is on screen
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setCurrentPuzzleIndex(nextIndex);
+      });
+    });
   }, [puzzles, currentPuzzleIndex, pushTimestampBucket, sendBucketToBackend]);
 
   const handleFailed = useCallback(() => {
     setScore((s) => ({ ...s, wrong: s.wrong + 1 }));
+  }, []);
+
+  const handlePuzzleReady = useCallback(() => {
+    setBoardTransitioning(false);
   }, []);
 
   const goTo = (idx: number) => {
@@ -714,7 +533,12 @@ export default function WoodpeakerSessionPage() {
     if (idx > currentPuzzleIndex) {
       pushTimestampBucket(clockElapsedRef.current);
     }
-    setCurrentPuzzleIndex(idx);
+    setBoardTransitioning(true);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setCurrentPuzzleIndex(idx);
+      });
+    });
   };
 
   const progressWidth = useMemo(() => {
@@ -753,13 +577,35 @@ export default function WoodpeakerSessionPage() {
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
             <div className="w-full max-w-[760px] mx-auto lg:mx-0">
-              <PuzzleBoard
-                key={`${currentPuzzle._id}-${currentPuzzleIndex}`}
-                puzzle={currentPuzzle}
-                onSolved={handleSolved}
-                onFailed={handleFailed}
-                onUserMoveStart={ensureSessionStarted}
-              />
+              <div className="relative">
+                <PuzzleBoard
+                  key={`${currentPuzzle._id}-${currentPuzzleIndex}`}
+                  puzzle={currentPuzzle}
+                  onSolved={handleSolved}
+                  onFailed={handleFailed}
+                  onUserMoveStart={ensureSessionStarted}
+                  onPuzzleReady={handlePuzzleReady}
+                  initialMoveDelay={boardTransitioning ? 0 : 150}
+                />
+                {boardTransitioning && (
+                  <div className="absolute inset-0 z-20 rounded-2xl overflow-hidden pointer-events-none bg-zinc-950">
+                    <div className="h-8 rounded-xl bg-white/[0.03]" />
+                    <div
+                      className="mt-3 w-full aspect-square rounded-2xl animate-pulse"
+                      style={{
+                        backgroundColor: LICHESS_LIGHT_SQUARE,
+                        backgroundImage: `conic-gradient(${LICHESS_LIGHT_SQUARE} 25%, ${LICHESS_DARK_SQUARE} 0 50%, ${LICHESS_LIGHT_SQUARE} 0 75%, ${LICHESS_DARK_SQUARE} 0)`,
+                        backgroundSize: "25% 25%",
+                      }}
+                    />
+                    <div className="flex items-center justify-center gap-1.5 mt-2">
+                      {Array.from({ length: 4 }).map((_, i) => (
+                        <div key={i} className="w-1.5 h-1.5 rounded-full bg-white/15" />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex flex-col gap-5">
