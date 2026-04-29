@@ -284,6 +284,43 @@ func (q *Queries) DeleteWoodpeakerSession(ctx context.Context, arg DeleteWoodpea
 	return err
 }
 
+const evaluateSetResult = `-- name: EvaluateSetResult :exec
+INSERT INTO WoodpeakerSetResult (_id,set_id,attemptNumber,totalTimeMs,solvedClean,solvedOnRetry,failed,puzzleAttempts,timeBucket) VALUES(
+$1,$2,
+$3,$4,
+$5,$6,
+$7,$8,
+$9
+)
+`
+
+type EvaluateSetResultParams struct {
+	ID             pgtype.UUID `json:"_id"`
+	SetID          pgtype.UUID `json:"set_id"`
+	Attemptnumber  int32       `json:"attemptnumber"`
+	Totaltimems    int64       `json:"totaltimems"`
+	Solvedclean    int32       `json:"solvedclean"`
+	Solvedonretry  int32       `json:"solvedonretry"`
+	Failed         int32       `json:"failed"`
+	Puzzleattempts []byte      `json:"puzzleattempts"`
+	Timebucket     []byte      `json:"timebucket"`
+}
+
+func (q *Queries) EvaluateSetResult(ctx context.Context, arg EvaluateSetResultParams) error {
+	_, err := q.db.Exec(ctx, evaluateSetResult,
+		arg.ID,
+		arg.SetID,
+		arg.Attemptnumber,
+		arg.Totaltimems,
+		arg.Solvedclean,
+		arg.Solvedonretry,
+		arg.Failed,
+		arg.Puzzleattempts,
+		arg.Timebucket,
+	)
+	return err
+}
+
 const getFenEvaluation = `-- name: GetFenEvaluation :many
 SELECT
   fen,
@@ -874,4 +911,19 @@ func (q *Queries) RegisterUser(ctx context.Context, arg RegisterUserParams) (int
 	var _id int32
 	err := row.Scan(&_id)
 	return _id, err
+}
+
+const renameWoodpeakerSession = `-- name: RenameWoodpeakerSession :exec
+UPDATE woodpeakerset SET title = $3 WHERE _id = $1 AND user_id = $2
+`
+
+type RenameWoodpeakerSessionParams struct {
+	ID     pgtype.UUID `json:"_id"`
+	UserID int32       `json:"user_id"`
+	Title  string      `json:"title"`
+}
+
+func (q *Queries) RenameWoodpeakerSession(ctx context.Context, arg RenameWoodpeakerSessionParams) error {
+	_, err := q.db.Exec(ctx, renameWoodpeakerSession, arg.ID, arg.UserID, arg.Title)
+	return err
 }

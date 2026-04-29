@@ -485,7 +485,7 @@ export default function WoodpeakerSessionPage() {
   const sendBucketToBackend = useCallback(async (bucket: number[]) => {
     if (bucketSubmittedRef.current || bucket.length === 0) return;
     try {
-      await axios.post("http://localhost:3030/woodpeaker/buckt", {
+      await axios.post("http://localhost:3030/woodpeaker/result", {
         bucket,
         sessionId,
       }, { withCredentials: true });
@@ -585,19 +585,12 @@ export default function WoodpeakerSessionPage() {
                   onFailed={handleFailed}
                   onUserMoveStart={ensureSessionStarted}
                   onPuzzleReady={handlePuzzleReady}
-                  initialMoveDelay={boardTransitioning ? 0 : 150}
+                  initialMoveDelay={150}
                 />
                 {boardTransitioning && (
-                  <div className="absolute inset-0 z-20 rounded-2xl overflow-hidden pointer-events-none bg-zinc-950">
+                  <div className="absolute inset-0 z-20 rounded-2xl overflow-hidden pointer-events-none">
                     <div className="h-8 rounded-xl bg-white/[0.03]" />
-                    <div
-                      className="mt-3 w-full aspect-square rounded-2xl animate-pulse"
-                      style={{
-                        backgroundColor: LICHESS_LIGHT_SQUARE,
-                        backgroundImage: `conic-gradient(${LICHESS_LIGHT_SQUARE} 25%, ${LICHESS_DARK_SQUARE} 0 50%, ${LICHESS_LIGHT_SQUARE} 0 75%, ${LICHESS_DARK_SQUARE} 0)`,
-                        backgroundSize: "25% 25%",
-                      }}
-                    />
+                    <div className="mt-3 w-full aspect-square rounded-2xl animate-pulse bg-zinc-900" />
                     <div className="flex items-center justify-center gap-1.5 mt-2">
                       {Array.from({ length: 4 }).map((_, i) => (
                         <div key={i} className="w-1.5 h-1.5 rounded-full bg-white/15" />

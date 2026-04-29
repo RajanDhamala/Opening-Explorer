@@ -11,7 +11,8 @@ import {
   LazyWoodpeakPage,
   LazyWoodpeakerSessionPage,
   LazyCustomEvalPage,
-  LazySwiftChess
+  LazySwiftChess,
+  LazyGraphPage
 } from "./LazyLoading/LazyLoading";
 import { BrowserRouter as Router, Routes, Route, } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -67,6 +68,8 @@ function App() {
             <Route path="/board" element={<LazyBoardPage />} />
 
             <Route path="/swift" element={<LazySwiftChess />} />
+
+            <Route path="/graph" element={<LazyGraphPage />} />
 
             <Route path="/wood" element={<LazyWoodpeakPage />} />
             <Route path="/woodpeaker/:id" element={<LazyWoodpeakerSessionPage />} />

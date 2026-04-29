@@ -214,3 +214,19 @@ ORDER BY i.position;
 
 -- name: DeleteWoodpeakerSession :exec
 DELETE FROM WoodpeakerSet WHERE _id=$1 AND user_id =$2;
+
+-- name: RenameWoodpeakerSession :exec
+UPDATE woodpeakerset SET title = $3 WHERE _id = $1 AND user_id = $2;
+
+-- name: EvaluateSetResult :exec
+INSERT INTO WoodpeakerSetResult (_id,set_id,attemptNumber,totalTimeMs,solvedClean,solvedOnRetry,failed,puzzleAttempts,timeBucket) VALUES(
+$1,$2,
+$3,$4,
+$5,$6,
+$7,$8,
+$9
+);
+
+
+
+ 

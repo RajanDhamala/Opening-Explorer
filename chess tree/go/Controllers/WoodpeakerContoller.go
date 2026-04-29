@@ -252,3 +252,96 @@ func (ctrl *Controller) DeleteWoodpeakerSet(c *fiber.Ctx) error {
 		"message": "succesfully deleted Woodpeaker Set",
 	})
 }
+
+type ReameStruct struct {
+	SessionId string `json:"sessionId"`
+	NewTitle  string `json:"title"`
+}
+
+func (ctrl *Controller) RenameWoodpeakerSet(c *fiber.Ctx) error {
+	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
+	if !ok || userClaims == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+
+	id, err := strconv.Atoi(userClaims.ID)
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid user id in token",
+		})
+	}
+
+	data := ReameStruct{}
+	errs := c.BodyParser(&data)
+
+	if errs != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error": "failed to parse paylod",
+			"er":    err,
+		})
+	}
+
+	if data.NewTitle == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"err": "invalid paylaod",
+		})
+	}
+
+	var pgSetId pgtype.UUID
+	if err := pgSetId.Scan(data.SessionId); err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "invalid set id",
+		})
+	}
+
+	errror := ctrl.queries.RenameWoodpeakerSession(c.Context(), db.RenameWoodpeakerSessionParams{
+		UserID: int32(id),
+		ID:     pgSetId,
+		Title:  data.NewTitle,
+	})
+
+	if errror != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "failed to rename set",
+		})
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"data": "succesfully renamed set",
+	})
+}
+
+type SessionReport struct {
+	SessionId string `json:"sessionId"`
+	Bucket    []int  `json:"bucket"`
+}
+
+func (ctrl *Controller) WoodpeakerReportBucket(c *fiber.Ctx) error {
+	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
+	if !ok || userClaims == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+
+	id, err := strconv.Atoi(userClaims.ID)
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid user id in token",
+		})
+	}
+
+	data := SessionReport{}
+	if err := c.BodyParser(&data); err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "failed to parse body",
+		})
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"data":    "succefully created report",
+		"payload": data,
+	})
+}

@@ -24,6 +24,7 @@
     "react-hook-form": "^7.72.1",
     "react-hot-toast": "^2.6.0",
     "react-router-dom": "^7.9.3",
+    "recharts": "^3.8.1",
     "stockfish.js": "^10.0.2",
     "swiftchess": "^0.1.1",
     "tailwind-merge": "^3.3.1",
