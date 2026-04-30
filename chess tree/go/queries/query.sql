@@ -218,15 +218,41 @@ DELETE FROM WoodpeakerSet WHERE _id=$1 AND user_id =$2;
 -- name: RenameWoodpeakerSession :exec
 UPDATE woodpeakerset SET title = $3 WHERE _id = $1 AND user_id = $2;
 
--- name: EvaluateSetResult :exec
-INSERT INTO WoodpeakerSetResult (_id,set_id,attemptNumber,totalTimeMs,solvedClean,solvedOnRetry,failed,puzzleAttempts,timeBucket) VALUES(
-$1,$2,
-$3,$4,
-$5,$6,
-$7,$8,
-$9
-);
-
-
-
+-- name: EvaluateSetResult :one
+WITH next_attempt AS (
+  SELECT COALESCE(MAX(attemptNumber), 0) + 1 AS num
+  FROM WoodpeakerSetResult
+  WHERE set_id = @set_id
+)
+INSERT INTO WoodpeakerSetResult (set_id, attemptNumber, totalTimeMs, solvedClean, failed, timeBucket,user_id)
+SELECT @set_id, num, @total_time_ms, @solved_clean, @failed, @time_bucket,@user_id
+FROM next_attempt
+RETURNING *;
  
+-- name: GetSetReports :many
+SELECT
+  _id,
+  attemptNumber,
+  totalTimeMs,
+  solvedClean,
+  failed,
+  solvedClean + failed AS totalItems,
+  timeBucket
+FROM WoodpeakerSetResult
+WHERE set_id = @set_id AND user_id = @user_id
+ORDER BY attemptNumber DESC;
+
+-- name: GetLatestReport :one
+SELECT _id, attemptNumber, totalTimeMs, solvedClean, failed, timeBucket
+FROM WoodpeakerSetResult
+WHERE set_id = @set_id AND user_id = @user_id
+ORDER BY attemptNumber DESC
+LIMIT 1;
+
+
+-- name: GetAttemptList :many
+SELECT _id, attemptNumber
+FROM WoodpeakerSetResult
+WHERE set_id = @set_id AND user_id = @user_id
+ORDER BY attemptNumber DESC
+LIMIT 10;

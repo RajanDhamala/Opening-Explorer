@@ -13,4 +13,4 @@ export const LazyWoodpeakPage = lazy(() => import("../Pages/WoodpeakerPage.tsx")
 export const LazySwiftChess = lazy(() => import("../Pages/SwiftChess.tsx"))
 export const LazyWoodpeakerSessionPage = lazy(() => import("../Pages/WoodpeakerSessionPage.tsx"));
 export const LazyGraphPage = lazy(() => import("../Pages/GraphPage.tsx"))
-
+export const LazyCanvasPage = lazy(() => import("../Pages/CanvasPage.tsx"))

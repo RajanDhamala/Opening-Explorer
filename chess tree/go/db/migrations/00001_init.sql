@@ -100,17 +100,16 @@ CREATE INDEX idx_setitems_set ON WoodpeakerSetItems (set_id, position);
 
 CREATE TABLE WoodpeakerSetResult (
   _id            UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      INT         NOT NULL REFERENCES Users(_id) ON DELETE CASCADE,
   set_id         UUID    NOT NULL REFERENCES WoodpeakerSet(_id) ON DELETE CASCADE,
   attemptNumber  INT     NOT NULL DEFAULT 1,
   totalTimeMs    BIGINT  NOT NULL,
   solvedClean    INT     NOT NULL,
-  solvedOnRetry  INT     NOT NULL,
   failed         INT     NOT NULL,
-  puzzleAttempts JSONB   NOT NULL,
   timeBucket     JSONB   NOT NULL,
-
   CONSTRAINT unique_set_attempt UNIQUE (set_id, attemptNumber)
 );
+
 CREATE INDEX idx_result_set ON WoodpeakerSetResult (set_id);
 
 -- +goose Down

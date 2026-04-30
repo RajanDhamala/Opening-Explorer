@@ -488,6 +488,9 @@ export default function WoodpeakerSessionPage() {
       await axios.post("http://localhost:3030/woodpeaker/result", {
         bucket,
         sessionId,
+        solvedClean: score.correct,
+        Failed: score.wrong,
+        totalTimeMs: bucket.reduce((a, b) => a + b, 0),
       }, { withCredentials: true });
       bucketSubmittedRef.current = true;
     } catch (err) {

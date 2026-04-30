@@ -12,7 +12,8 @@ import {
   LazyWoodpeakerSessionPage,
   LazyCustomEvalPage,
   LazySwiftChess,
-  LazyGraphPage
+  LazyGraphPage,
+  LazyCanvasPage
 } from "./LazyLoading/LazyLoading";
 import { BrowserRouter as Router, Routes, Route, } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -73,6 +74,9 @@ function App() {
 
             <Route path="/wood" element={<LazyWoodpeakPage />} />
             <Route path="/woodpeaker/:id" element={<LazyWoodpeakerSessionPage />} />
+
+            <Route path="/canvas" element={<LazyCanvasPage />} />
+
 
             <Route path="*" element={<div className="p-10 text-center text-red-500 font-bold">404 | Page Not Found</div>} />
           </Routes>

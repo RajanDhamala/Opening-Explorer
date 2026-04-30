@@ -284,41 +284,86 @@ func (q *Queries) DeleteWoodpeakerSession(ctx context.Context, arg DeleteWoodpea
 	return err
 }
 
-const evaluateSetResult = `-- name: EvaluateSetResult :exec
-INSERT INTO WoodpeakerSetResult (_id,set_id,attemptNumber,totalTimeMs,solvedClean,solvedOnRetry,failed,puzzleAttempts,timeBucket) VALUES(
-$1,$2,
-$3,$4,
-$5,$6,
-$7,$8,
-$9
+const evaluateSetResult = `-- name: EvaluateSetResult :one
+WITH next_attempt AS (
+  SELECT COALESCE(MAX(attemptNumber), 0) + 1 AS num
+  FROM WoodpeakerSetResult
+  WHERE set_id = $1
 )
+INSERT INTO WoodpeakerSetResult (set_id, attemptNumber, totalTimeMs, solvedClean, failed, timeBucket,user_id)
+SELECT $1, num, $2, $3, $4, $5,$6
+FROM next_attempt
+RETURNING _id, user_id, set_id, attemptnumber, totaltimems, solvedclean, failed, timebucket
 `
 
 type EvaluateSetResultParams struct {
-	ID             pgtype.UUID `json:"_id"`
-	SetID          pgtype.UUID `json:"set_id"`
-	Attemptnumber  int32       `json:"attemptnumber"`
-	Totaltimems    int64       `json:"totaltimems"`
-	Solvedclean    int32       `json:"solvedclean"`
-	Solvedonretry  int32       `json:"solvedonretry"`
-	Failed         int32       `json:"failed"`
-	Puzzleattempts []byte      `json:"puzzleattempts"`
-	Timebucket     []byte      `json:"timebucket"`
+	SetID       pgtype.UUID `json:"set_id"`
+	TotalTimeMs int64       `json:"total_time_ms"`
+	SolvedClean int32       `json:"solved_clean"`
+	Failed      int32       `json:"failed"`
+	TimeBucket  []byte      `json:"time_bucket"`
+	UserID      int32       `json:"user_id"`
 }
 
-func (q *Queries) EvaluateSetResult(ctx context.Context, arg EvaluateSetResultParams) error {
-	_, err := q.db.Exec(ctx, evaluateSetResult,
-		arg.ID,
+func (q *Queries) EvaluateSetResult(ctx context.Context, arg EvaluateSetResultParams) (Woodpeakersetresult, error) {
+	row := q.db.QueryRow(ctx, evaluateSetResult,
 		arg.SetID,
-		arg.Attemptnumber,
-		arg.Totaltimems,
-		arg.Solvedclean,
-		arg.Solvedonretry,
+		arg.TotalTimeMs,
+		arg.SolvedClean,
 		arg.Failed,
-		arg.Puzzleattempts,
-		arg.Timebucket,
+		arg.TimeBucket,
+		arg.UserID,
 	)
-	return err
+	var i Woodpeakersetresult
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SetID,
+		&i.Attemptnumber,
+		&i.Totaltimems,
+		&i.Solvedclean,
+		&i.Failed,
+		&i.Timebucket,
+	)
+	return i, err
+}
+
+const getAttemptList = `-- name: GetAttemptList :many
+SELECT _id, attemptNumber
+FROM WoodpeakerSetResult
+WHERE set_id = $1 AND user_id = $2
+ORDER BY attemptNumber DESC
+LIMIT 10
+`
+
+type GetAttemptListParams struct {
+	SetID  pgtype.UUID `json:"set_id"`
+	UserID int32       `json:"user_id"`
+}
+
+type GetAttemptListRow struct {
+	ID            pgtype.UUID `json:"_id"`
+	Attemptnumber int32       `json:"attemptnumber"`
+}
+
+func (q *Queries) GetAttemptList(ctx context.Context, arg GetAttemptListParams) ([]GetAttemptListRow, error) {
+	rows, err := q.db.Query(ctx, getAttemptList, arg.SetID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAttemptListRow
+	for rows.Next() {
+		var i GetAttemptListRow
+		if err := rows.Scan(&i.ID, &i.Attemptnumber); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getFenEvaluation = `-- name: GetFenEvaluation :many
@@ -431,6 +476,42 @@ func (q *Queries) GetIssues(ctx context.Context, gameID pgtype.UUID) ([]Issue, e
 		return nil, err
 	}
 	return items, nil
+}
+
+const getLatestReport = `-- name: GetLatestReport :one
+SELECT _id, attemptNumber, totalTimeMs, solvedClean, failed, timeBucket
+FROM WoodpeakerSetResult
+WHERE set_id = $1 AND user_id = $2
+ORDER BY attemptNumber DESC
+LIMIT 1
+`
+
+type GetLatestReportParams struct {
+	SetID  pgtype.UUID `json:"set_id"`
+	UserID int32       `json:"user_id"`
+}
+
+type GetLatestReportRow struct {
+	ID            pgtype.UUID `json:"_id"`
+	Attemptnumber int32       `json:"attemptnumber"`
+	Totaltimems   int64       `json:"totaltimems"`
+	Solvedclean   int32       `json:"solvedclean"`
+	Failed        int32       `json:"failed"`
+	Timebucket    []byte      `json:"timebucket"`
+}
+
+func (q *Queries) GetLatestReport(ctx context.Context, arg GetLatestReportParams) (GetLatestReportRow, error) {
+	row := q.db.QueryRow(ctx, getLatestReport, arg.SetID, arg.UserID)
+	var i GetLatestReportRow
+	err := row.Scan(
+		&i.ID,
+		&i.Attemptnumber,
+		&i.Totaltimems,
+		&i.Solvedclean,
+		&i.Failed,
+		&i.Timebucket,
+	)
+	return i, err
 }
 
 const getPuzzlesByType = `-- name: GetPuzzlesByType :many
@@ -614,6 +695,63 @@ func (q *Queries) GetPuzzlesFast(ctx context.Context, arg GetPuzzlesFastParams) 
 			&i.Rating,
 			&i.Themes,
 			&i.Openingtags,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getSetReports = `-- name: GetSetReports :many
+SELECT
+  _id,
+  attemptNumber,
+  totalTimeMs,
+  solvedClean,
+  failed,
+  solvedClean + failed AS totalItems,
+  timeBucket
+FROM WoodpeakerSetResult
+WHERE set_id = $1 AND user_id = $2
+ORDER BY attemptNumber DESC
+`
+
+type GetSetReportsParams struct {
+	SetID  pgtype.UUID `json:"set_id"`
+	UserID int32       `json:"user_id"`
+}
+
+type GetSetReportsRow struct {
+	ID            pgtype.UUID `json:"_id"`
+	Attemptnumber int32       `json:"attemptnumber"`
+	Totaltimems   int64       `json:"totaltimems"`
+	Solvedclean   int32       `json:"solvedclean"`
+	Failed        int32       `json:"failed"`
+	Totalitems    int32       `json:"totalitems"`
+	Timebucket    []byte      `json:"timebucket"`
+}
+
+func (q *Queries) GetSetReports(ctx context.Context, arg GetSetReportsParams) ([]GetSetReportsRow, error) {
+	rows, err := q.db.Query(ctx, getSetReports, arg.SetID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSetReportsRow
+	for rows.Next() {
+		var i GetSetReportsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Attemptnumber,
+			&i.Totaltimems,
+			&i.Solvedclean,
+			&i.Failed,
+			&i.Totalitems,
+			&i.Timebucket,
 		); err != nil {
 			return nil, err
 		}

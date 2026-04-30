@@ -21,4 +21,5 @@ func WoodpeakerRouter(app *fiber.App, controller *Controllers.Controller) {
 	WoodpeakerRouter.Delete("/delList/:setId", middlewares.UserAuthenticate, controller.DeleteWoodpeakerSet)
 	WoodpeakerRouter.Patch("/rename", middlewares.UserAuthenticate, controller.RenameWoodpeakerSet)
 	WoodpeakerRouter.Post("/result", middlewares.UserAuthenticate, controller.WoodpeakerReportBucket)
+	WoodpeakerRouter.Get("/session/:sessionId/reports", middlewares.UserAuthenticate, controller.GetSessionReports)
 }

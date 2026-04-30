@@ -2,6 +2,7 @@ package Controllers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -314,8 +315,11 @@ func (ctrl *Controller) RenameWoodpeakerSet(c *fiber.Ctx) error {
 }
 
 type SessionReport struct {
-	SessionId string `json:"sessionId"`
-	Bucket    []int  `json:"bucket"`
+	SessionId   string `json:"sessionId"`
+	Bucket      []int  `json:"bucket"`
+	TotalTimeMs int64  `json:"totalTimeMs"`
+	SolvedClean int32  `json:"solvedClean"`
+	Failed      int32  `json:"failed"`
 }
 
 func (ctrl *Controller) WoodpeakerReportBucket(c *fiber.Ctx) error {
@@ -335,13 +339,82 @@ func (ctrl *Controller) WoodpeakerReportBucket(c *fiber.Ctx) error {
 
 	data := SessionReport{}
 	if err := c.BodyParser(&data); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "failed to parse body",
+		return c.Status(400).JSON(fiber.Map{"error": "failed to parse body"})
+	}
+
+	// Validate and parse the session (set) id
+	var setId pgtype.UUID
+	if err := setId.Scan(data.SessionId); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid session id"})
+	}
+
+	// Encode timeBucket
+	timeBucketBytes, err := json.Marshal(data.Bucket)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "failed to encode timebucket"})
+	}
+
+	// Insert — attemptNumber is handled inside the SQL CTE, no manual tracking needed
+	response, errs := ctrl.queries.EvaluateSetResult(c.Context(), db.EvaluateSetResultParams{
+		SetID:       setId,
+		UserID:      int32(id),
+		TotalTimeMs: data.TotalTimeMs,
+		SolvedClean: data.SolvedClean,
+		Failed:      data.Failed,
+		TimeBucket:  timeBucketBytes,
+	})
+	if errs != nil {
+		fmt.Println("error while evaluating set result:", err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to save report"})
+	}
+
+	return c.Status(201).JSON(fiber.Map{
+		"data":   "hello world",
+		"result": response,
+	})
+}
+
+func (ctrl *Controller) GetSessionReports(c *fiber.Ctx) error {
+	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
+	if !ok || userClaims == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	sessionId := c.Params("sessionId")
+	var setId pgtype.UUID
+	if err := setId.Scan(sessionId); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid session id"})
+	}
+	id, err := strconv.Atoi(userClaims.ID)
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid user id in token",
 		})
 	}
 
-	return c.Status(200).JSON(fiber.Map{
-		"data":    "succefully created report",
-		"payload": data,
+	reports, err := ctrl.queries.GetLatestReport(c.Context(), db.GetLatestReportParams{
+		SetID:  setId,
+		UserID: int32(id),
 	})
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error": "failed to fetch reports",
+			"err":   err,
+		})
+	}
+
+	list, errs := ctrl.queries.GetAttemptList(c.Context(), db.GetAttemptListParams{
+		SetID:  setId,
+		UserID: int32(id),
+	})
+
+	if errs != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch attempt list"})
+	}
+	return c.Status(200).JSON(
+		fiber.Map{
+			"data":   "hello sir how are u",
+			"report": reports,
+			"list":   list,
+		})
 }

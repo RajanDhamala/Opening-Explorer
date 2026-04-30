@@ -140,13 +140,12 @@ type Woodpeakersetitem struct {
 }
 
 type Woodpeakersetresult struct {
-	ID             pgtype.UUID `json:"_id"`
-	SetID          pgtype.UUID `json:"set_id"`
-	Attemptnumber  int32       `json:"attemptnumber"`
-	Totaltimems    int64       `json:"totaltimems"`
-	Solvedclean    int32       `json:"solvedclean"`
-	Solvedonretry  int32       `json:"solvedonretry"`
-	Failed         int32       `json:"failed"`
-	Puzzleattempts []byte      `json:"puzzleattempts"`
-	Timebucket     []byte      `json:"timebucket"`
+	ID            pgtype.UUID `json:"_id"`
+	UserID        int32       `json:"user_id"`
+	SetID         pgtype.UUID `json:"set_id"`
+	Attemptnumber int32       `json:"attemptnumber"`
+	Totaltimems   int64       `json:"totaltimems"`
+	Solvedclean   int32       `json:"solvedclean"`
+	Failed        int32       `json:"failed"`
+	Timebucket    []byte      `json:"timebucket"`
 }
