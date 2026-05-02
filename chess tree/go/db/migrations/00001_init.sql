@@ -107,6 +107,7 @@ CREATE TABLE WoodpeakerSetResult (
   solvedClean    INT     NOT NULL,
   failed         INT     NOT NULL,
   timeBucket     JSONB   NOT NULL,
+  createdAt DATE DEFAULT CURRENT_DATE,
   CONSTRAINT unique_set_attempt UNIQUE (set_id, attemptNumber)
 );
 

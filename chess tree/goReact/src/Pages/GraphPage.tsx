@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, BarChart3, Clock, Zap, Target, ZoomIn, ZoomOut } from "lucide-react";
 import React from "react";
+import axios from "axios";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 
 interface PuzzleDataPoint {
@@ -13,6 +15,46 @@ interface PuzzleDataPoint {
 interface BrushState {
   start: number;
   end: number;
+}
+
+interface AttemptSummary {
+  _id: string;
+  attemptnumber: number;
+}
+
+interface ReportRecord {
+  _id: string;
+  user_id?: number;
+  set_id?: string;
+  attemptnumber: number;
+  totaltimems: number;
+  solvedclean: number;
+  failed: number;
+  timebucket?: string | null;
+  createdat?: string;
+}
+
+interface SessionReportsResponse {
+  bucket?: unknown;
+  data?: string;
+  list?: unknown;
+  report?: unknown;
+}
+
+interface ResultReportResponse {
+  bucket?: unknown;
+  data?: unknown;
+  message?: string;
+}
+
+interface ReportPayload {
+  report: ReportRecord;
+  bucket: number[];
+}
+
+interface SessionReportsData {
+  attempts: AttemptSummary[];
+  latestReport: ReportPayload | null;
 }
 
 
@@ -623,7 +665,6 @@ const mobileBtnStyle: React.CSSProperties = {
   userSelect: "none",
 };
 
-import axios from "axios";
 function MobileZoomBar({ brush, total, onZoom, onPan }: {
   brush: BrushState; total: number;
   onZoom: (c: number, f: number) => void;
@@ -657,66 +698,242 @@ function MobileZoomBar({ brush, total, onZoom, onPan }: {
 }
 
 
-// Replace this real session data
-const DUMMY_DATA = {
-  sessionId: "0343ef9c-fd93-459d-aba8-420b41f8884f",
-  bucket: [
-    400, 520, 690, 710, 980, 1010, 1400, 1420, 1435, 1800,
-    2100, 2120, 2600, 2650, 2660, 3200, 3215, 3900, 4100, 4120,
-    4800, 4811, 5500, 6100, 6110, 7000, 7110, 8200, 8300, 9044,
-    10000, 10050, 10711, 12000, 12120, 13478, 15000, 15100, 16260, 17000,
-    17150, 18011, 19000, 19120, 19628, 21000, 22000, 22100, 24000, 26000,
+function normalizeAttemptList(value: unknown): AttemptSummary[] {
+  if (!Array.isArray(value)) return [];
 
-    26100, 26300, 26500, 26620, 30000, 30500, 34000, 34500, 34600, 38000,
-    42000, 42100, 45000, 48000, 48150, 52000, 56000, 56100, 60000, 64000,
-    64120, 68000, 72000, 72100, 76000, 80000, 80100, 84000, 88000, 88150,
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
 
-    90000, 90200, 90500, 91000, 95000, 100000, 100200, 105000, 110000, 110500,
-    120000, 125000, 125100, 130000, 135000, 140000, 141000, 150000, 160000, 160200,
+      const rawId = (item as { _id?: unknown })._id;
+      const rawAttempt = (item as { attemptnumber?: unknown }).attemptnumber;
+      const attemptnumber = Number(rawAttempt);
 
-    170000, 175000, 176000, 180000, 190000, 200000, 200500, 210000, 220000, 221000,
-    230000, 240000, 241000, 250000, 260000, 261200, 270000, 280000, 281000, 290000,
+      if (typeof rawId !== "string" || !Number.isFinite(attemptnumber)) {
+        return null;
+      }
 
-    300000, 305000, 310000, 320000, 330000, 340000, 350000, 360000, 370000, 380000,
-    381000, 390000, 400000, 410000, 420000, 421500, 430000, 440000, 450000, 460000,
+      return {
+        _id: rawId,
+        attemptnumber,
+      };
+    })
+    .filter((item): item is AttemptSummary => item !== null);
+}
 
-    470000, 480000, 490000, 500000, 510000, 520000, 530000, 540000, 550000, 560000,
-    561200, 570000, 580000, 590000, 600000, 610000, 620000, 630000, 640000, 650000,
+function normalizeReport(value: unknown): ReportRecord | null {
+  if (!value || typeof value !== "object") return null;
 
-    660000, 670000, 680000, 690000, 700000, 710000, 720000, 730000, 740000, 750000,
-    760000, 770000, 780000, 790000, 800000, 810000, 820000, 830000, 840000, 850000,
+  const raw = value as Partial<ReportRecord>;
+  if (typeof raw._id !== "string" || !Number.isFinite(Number(raw.attemptnumber))) {
+    return null;
+  }
 
-    860000, 870000, 880000, 890000, 900000, 910000, 920000, 930000, 940000, 950000,
-    960000, 970000, 980000, 990000, 1000000, 1010000, 1020000, 1030000, 1040000, 1050000,
+  return {
+    _id: raw._id,
+    user_id: raw.user_id,
+    set_id: raw.set_id,
+    attemptnumber: Number(raw.attemptnumber),
+    totaltimems: Number(raw.totaltimems ?? 0),
+    solvedclean: Number(raw.solvedclean ?? 0),
+    failed: Number(raw.failed ?? 0),
+    timebucket: typeof raw.timebucket === "string" ? raw.timebucket : null,
+    createdat: typeof raw.createdat === "string" ? raw.createdat : undefined,
+  };
+}
 
-    1060000, 1070000, 1080000, 1090000, 1100000, 1110000, 1120000, 1130000, 1140000, 1150000,
-    1160000, 1170000, 1180000, 1190000, 1200000, 1210000, 1220000, 1230000, 1240000, 1250000
-  ],
+function decodeBucketFromBase64(encoded?: string | null): number[] {
+  if (!encoded) return [];
 
+  try {
+    const decoded = window.atob(encoded);
+    const parsed = JSON.parse(decoded);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+  } catch {
+    return [];
+  }
+}
 
-}; export default function GraphPage() {
+function normalizeBucket(bucket: unknown, encodedBucket?: string | null): number[] {
+  if (Array.isArray(bucket)) {
+    return bucket
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+  }
+
+  return decodeBucketFromBase64(encodedBucket);
+}
+
+function buildDataPoints(bucket: number[]): PuzzleDataPoint[] {
+  return bucket.map((cumulative, index) => ({
+    puzzle: index + 1,
+    time: Math.max(0, cumulative - (bucket[index - 1] ?? 0)),
+    cumulative,
+  }));
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError(error)) {
+    const responseData = error.response?.data as { error?: unknown; message?: unknown } | undefined;
+    if (typeof responseData?.error === "string" && responseData.error.trim()) return responseData.error;
+    if (typeof responseData?.message === "string" && responseData.message.trim()) return responseData.message;
+  }
+
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return fallback;
+}
+
+function normalizeSessionReportsPayload(payload?: SessionReportsResponse): SessionReportsData {
+  const attempts = normalizeAttemptList(payload?.list);
+  const report = normalizeReport(payload?.report);
+
+  return {
+    attempts,
+    latestReport: report
+      ? {
+        report,
+        bucket: normalizeBucket(payload?.bucket, report.timebucket),
+      }
+      : null,
+  };
+}
+
+function normalizeResultReportPayload(payload?: ResultReportResponse): ReportPayload {
+  const report = normalizeReport(payload?.data);
+  if (!report) {
+    throw new Error("Invalid report payload.");
+  }
+
+  return {
+    report,
+    bucket: normalizeBucket(payload?.bucket, report.timebucket),
+  };
+}
+
+async function fetchSessionReports(sessionId: string): Promise<SessionReportsData> {
+  const response = await axios.get<SessionReportsResponse>(
+    `http://localhost:3030/woodpeaker/session/${sessionId}/reports`,
+    { withCredentials: true },
+  );
+
+  return normalizeSessionReportsPayload(response.data);
+}
+
+async function fetchResultReport(resultId: string): Promise<ReportPayload> {
+  const response = await axios.get<ResultReportResponse>(
+    `http://localhost:3030/woodpeaker/report/${resultId}`,
+    { withCredentials: true },
+  );
+
+  return normalizeResultReportPayload(response.data);
+}
+
+export default function GraphPage() {
   const navigate = useNavigate();
+  const params = useParams();
+  const sessionId = params.sessionId ?? params.id ?? "";
   const isMobile = useIsMobile();
+  const queryClient = useQueryClient();
+  const [selectedReportId, setSelectedReportId] = useState("");
+  const [displayReportData, setDisplayReportData] = useState<ReportPayload | null>(null);
+
+  const sessionReportsQuery = useQuery({
+    queryKey: ["woodpeaker-session-reports", sessionId],
+    queryFn: () => fetchSessionReports(sessionId),
+    enabled: Boolean(sessionId),
+  });
+
+  const attempts = sessionReportsQuery.data?.attempts ?? [];
+  const latestReport = sessionReportsQuery.data?.latestReport ?? null;
+  const fallbackSelectedReportId = latestReport?.report._id ?? attempts[0]?._id ?? "";
+
+  useEffect(() => {
+    setSelectedReportId("");
+    setDisplayReportData(null);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!latestReport) return;
+    queryClient.setQueryData(["woodpeaker-report", latestReport.report._id], latestReport);
+  }, [latestReport, queryClient]);
+
+  useEffect(() => {
+    if (!fallbackSelectedReportId) return;
+
+    const selectionStillExists = attempts.some((attempt) => attempt._id === selectedReportId);
+    if (!selectedReportId || !selectionStillExists) {
+      setSelectedReportId(fallbackSelectedReportId);
+    }
+  }, [attempts, fallbackSelectedReportId, selectedReportId]);
+
+  const reportQuery = useQuery({
+    queryKey: ["woodpeaker-report", selectedReportId],
+    queryFn: () => fetchResultReport(selectedReportId),
+    enabled: Boolean(selectedReportId),
+    placeholderData: (previousData) => {
+      if (previousData) return previousData;
+      if (latestReport?.report._id === selectedReportId) return latestReport;
+      return undefined;
+    },
+  });
+
+  const resolvedReportData = useMemo(() => {
+    if (reportQuery.data) return reportQuery.data;
+    if (latestReport?.report._id === selectedReportId) return latestReport;
+    return null;
+  }, [latestReport, reportQuery.data, selectedReportId]);
+
+  useEffect(() => {
+    if (!resolvedReportData) return;
+    setDisplayReportData(resolvedReportData);
+  }, [resolvedReportData]);
+
+  const activeReportData = resolvedReportData ?? displayReportData;
+  const activeReport = activeReportData?.report ?? null;
+  const bucket = activeReportData?.bucket ?? [];
+  const isInitialLoading = Boolean(sessionId) && !activeReportData && (sessionReportsQuery.isLoading || reportQuery.isLoading);
+  const isAttemptRefreshing = Boolean(activeReportData) && reportQuery.isFetching;
+  const errorMessage = useMemo(() => {
+    if (!sessionId) return "Missing session id in route.";
+    if (sessionReportsQuery.isError && !sessionReportsQuery.data) {
+      return getErrorMessage(sessionReportsQuery.error, "Failed to load session reports.");
+    }
+    if (reportQuery.isError) {
+      return getErrorMessage(reportQuery.error, "Failed to load the selected attempt.");
+    }
+    return null;
+  }, [reportQuery.error, reportQuery.isError, sessionId, sessionReportsQuery.data, sessionReportsQuery.error, sessionReportsQuery.isError]);
 
   const data = useMemo<PuzzleDataPoint[]>(() => {
-    const { bucket } = DUMMY_DATA;
-    return bucket.map((time, i) => ({
-      puzzle: i + 1,
-      time: i === 0 ? time : time - bucket[i - 1],
-      cumulative: time,
-    }));
-  }, []);
+    return buildDataPoints(bucket);
+  }, [bucket]);
 
   const allTimes = useMemo(() => data.map((d) => d.time), [data]);
   const totalTime = data[data.length - 1]?.cumulative ?? 0;
-  const avgTime = Math.round(totalTime / data.length);
-  const fastest = useMemo(() => Math.min(...allTimes), [allTimes]);
-  const slowest = useMemo(() => Math.max(...allTimes), [allTimes]);
+  const avgTime = data.length > 0 ? Math.round(totalTime / data.length) : 0;
+  const fastest = useMemo(() => (allTimes.length > 0 ? Math.min(...allTimes) : 0), [allTimes]);
+  const slowest = useMemo(() => (allTimes.length > 0 ? Math.max(...allTimes) : 0), [allTimes]);
 
   const { brush, setBrush, zoom, pan } = useBrush(data.length, Math.min(50, data.length));
 
-  const sliceStart = Math.floor(brush.start) + 1;
-  const sliceEnd = Math.min(Math.ceil(brush.end), data.length);
+  useEffect(() => {
+    if (data.length === 0 || !activeReport?._id) return;
+    setBrush({ start: 0, end: Math.min(50, data.length) });
+  }, [activeReport?._id, data.length, setBrush]);
+
+  const sliceStart = data.length > 0 ? Math.floor(brush.start) + 1 : 0;
+  const sliceEnd = data.length > 0 ? Math.min(Math.ceil(brush.end), data.length) : 0;
+  const formattedCreatedAt = activeReport?.createdat
+    ? new Date(activeReport.createdat).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })
+    : null;
+  const backTarget = sessionId ? `/woodpeaker/${sessionId}` : "/wood";
 
   return (
     <div style={{
@@ -729,7 +946,7 @@ const DUMMY_DATA = {
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: isMobile ? 16 : 28 }}>
           <button
-            onClick={() => navigate("/wood")}
+            onClick={() => navigate(backTarget)}
             style={{
               background: "rgba(255,255,255,0.06)",
               border: "1px solid rgba(255,255,255,0.1)",
@@ -741,12 +958,235 @@ const DUMMY_DATA = {
           >
             <ArrowLeft size={16} />
           </button>
-          <h1 style={{ margin: 0, fontSize: isMobile ? 16 : 20, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
-            <BarChart3 size={isMobile ? 16 : 20} color="#4ade80" />
-            Puzzle Performance
-          </h1>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <h1 style={{ margin: 0, fontSize: isMobile ? 16 : 20, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                <BarChart3 size={isMobile ? 16 : 20} color="#4ade80" />
+                Puzzle Performance
+              </h1>
+              {activeReport && (
+                <span style={{
+                  fontSize: 11, fontWeight: 700,
+                  background: "rgba(96,165,250,0.15)", color: "#60a5fa",
+                  padding: "4px 10px", borderRadius: 999,
+                  border: "1px solid rgba(96,165,250,0.25)",
+                }}>
+                  Attempt {activeReport.attemptnumber}
+                </span>
+              )}
+              {isAttemptRefreshing && (
+                <span style={{
+                  fontSize: 11, fontWeight: 700,
+                  background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.65)",
+                  padding: "4px 10px", borderRadius: 999,
+                  border: "1px solid rgba(255,255,255,0.1)",
+                }}>
+                  Updating...
+                </span>
+              )}
+            </div>
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "rgba(255,255,255,0.38)" }}>
+              {sessionId ? `Session ${sessionId}` : "Session report"}
+            </p>
+          </div>
         </div>
 
+        <div style={{
+          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 18,
+          padding: isMobile ? "12px 10px" : "16px 18px",
+          marginBottom: isMobile ? 12 : 18,
+        }}>
+          <div style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: isMobile ? "flex-start" : "center",
+            gap: 10,
+            flexDirection: isMobile ? "column" : "row",
+          }}>
+            <div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Attempt History
+              </div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginTop: 4 }}>
+                {attempts.length > 0 ? `${attempts.length} saved submissions` : "No saved submissions yet"}
+              </div>
+              <div style={{ marginTop: 12, minWidth: isMobile ? "100%" : 240 }}>
+                <label style={{ display: "block" }}>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>
+                    Attempt
+                  </span>
+                  <div style={{ position: "relative", marginTop: 8 }}>
+                    <select
+                      value={selectedReportId}
+                      onChange={(event) => setSelectedReportId(event.target.value)}
+                      disabled={!attempts.length || sessionReportsQuery.isLoading}
+                      style={{
+                        width: "100%",
+                        appearance: "none",
+                        WebkitAppearance: "none",
+                        MozAppearance: "none",
+                        background: "rgba(255,255,255,0.06)",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        borderRadius: 12,
+                        padding: "11px 38px 11px 12px",
+                        backgroundColor: "#18181b",
+                        color: "#f4f4f5",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        outline: "none",
+                        cursor: attempts.length > 0 ? "pointer" : "not-allowed",
+                        colorScheme: "dark",
+                      }}
+                    >
+                      {attempts.length === 0 && (
+                        <option value="" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>
+                          No attempts
+                        </option>
+                      )}
+                      {attempts.map((attempt) => (
+                        <option
+                          key={attempt._id}
+                          value={attempt._id}
+                          style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}
+                        >
+                          Attempt {attempt.attemptnumber}
+                        </option>
+                      ))}
+                    </select>
+                    <span style={{
+                      position: "absolute",
+                      right: 12,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      pointerEvents: "none",
+                      fontSize: 12,
+                      color: "rgba(255,255,255,0.42)",
+                    }}>
+                      ▼
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {activeReport && (
+                <span style={{
+                  fontSize: 12,
+                  color: "rgba(255,255,255,0.72)",
+                  background: "rgba(255,255,255,0.05)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                }}>
+                  Solved {activeReport.solvedclean}
+                </span>
+              )}
+              {activeReport && (
+                <span style={{
+                  fontSize: 12,
+                  color: "rgba(255,255,255,0.72)",
+                  background: "rgba(255,255,255,0.05)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                }}>
+                  Failed {activeReport.failed}
+                </span>
+              )}
+              {formattedCreatedAt && (
+                <span style={{
+                  fontSize: 12,
+                  color: "rgba(255,255,255,0.72)",
+                  background: "rgba(255,255,255,0.05)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                }}>
+                  {formattedCreatedAt}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {errorMessage && (
+          <div style={{
+            background: "rgba(239,68,68,0.08)",
+            border: "1px solid rgba(239,68,68,0.18)",
+            borderRadius: 18,
+            padding: "14px 16px",
+            marginBottom: 18,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#fca5a5" }}>
+              {errorMessage}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void sessionReportsQuery.refetch();
+                if (selectedReportId) {
+                  void reportQuery.refetch();
+                }
+              }}
+              style={{
+                marginTop: 10,
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: 10,
+                padding: "8px 12px",
+                color: "#fff",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {isInitialLoading && (
+          <>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)",
+              gap: 8, marginBottom: isMobile ? 12 : 20,
+            }}>
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div
+                  key={index}
+                  style={{
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    borderRadius: 16,
+                    padding: "14px 16px",
+                    minHeight: 80,
+                  }}
+                />
+              ))}
+            </div>
+
+            <div style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 18,
+              minHeight: 128,
+              marginBottom: 10,
+            }} />
+
+            <div style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 18,
+              minHeight: isMobile ? 236 : 296,
+            }} />
+          </>
+        )}
+
+        {!isInitialLoading && data.length > 0 && (
+          <>
         {/* Stats grid */}
         <div style={{
           display: "grid",
@@ -837,6 +1277,23 @@ const DUMMY_DATA = {
             </div>
           ))}
         </div>
+          </>
+        )}
+
+        {!isInitialLoading && !errorMessage && data.length === 0 && (
+          <div style={{
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 18,
+            padding: "36px 18px",
+            textAlign: "center",
+          }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>No graph data available</div>
+            <p style={{ margin: "8px auto 0", maxWidth: 420, fontSize: 13, color: "rgba(255,255,255,0.42)", lineHeight: 1.6 }}>
+              This session does not have a saved report yet. Finish a submission first, then open this page again.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

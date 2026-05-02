@@ -22,4 +22,5 @@ func WoodpeakerRouter(app *fiber.App, controller *Controllers.Controller) {
 	WoodpeakerRouter.Patch("/rename", middlewares.UserAuthenticate, controller.RenameWoodpeakerSet)
 	WoodpeakerRouter.Post("/result", middlewares.UserAuthenticate, controller.WoodpeakerReportBucket)
 	WoodpeakerRouter.Get("/session/:sessionId/reports", middlewares.UserAuthenticate, controller.GetSessionReports)
+	WoodpeakerRouter.Get("/report/:resultId", middlewares.UserAuthenticate, controller.GetResultReportList)
 }

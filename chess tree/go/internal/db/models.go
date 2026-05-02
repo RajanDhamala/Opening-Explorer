@@ -148,4 +148,5 @@ type Woodpeakersetresult struct {
 	Solvedclean   int32       `json:"solvedclean"`
 	Failed        int32       `json:"failed"`
 	Timebucket    []byte      `json:"timebucket"`
+	Createdat     pgtype.Date `json:"createdat"`
 }

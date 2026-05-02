@@ -485,6 +485,7 @@ export default function WoodpeakerSessionPage() {
   const sendBucketToBackend = useCallback(async (bucket: number[]) => {
     if (bucketSubmittedRef.current || bucket.length === 0) return;
     try {
+      console.log("score:", score)
       await axios.post("http://localhost:3030/woodpeaker/result", {
         bucket,
         sessionId,

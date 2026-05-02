@@ -293,7 +293,7 @@ WITH next_attempt AS (
 INSERT INTO WoodpeakerSetResult (set_id, attemptNumber, totalTimeMs, solvedClean, failed, timeBucket,user_id)
 SELECT $1, num, $2, $3, $4, $5,$6
 FROM next_attempt
-RETURNING _id, user_id, set_id, attemptnumber, totaltimems, solvedclean, failed, timebucket
+RETURNING _id, user_id, set_id, attemptnumber, totaltimems, solvedclean, failed, timebucket, createdat
 `
 
 type EvaluateSetResultParams struct {
@@ -324,6 +324,7 @@ func (q *Queries) EvaluateSetResult(ctx context.Context, arg EvaluateSetResultPa
 		&i.Solvedclean,
 		&i.Failed,
 		&i.Timebucket,
+		&i.Createdat,
 	)
 	return i, err
 }
@@ -704,6 +705,32 @@ func (q *Queries) GetPuzzlesFast(ctx context.Context, arg GetPuzzlesFastParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const getResultDetails = `-- name: GetResultDetails :one
+SELECT _id, user_id, set_id, attemptnumber, totaltimems, solvedclean, failed, timebucket, createdat from WoodpeakerSetResult WHERE _id = $1 AND user_id = $2
+`
+
+type GetResultDetailsParams struct {
+	ID     pgtype.UUID `json:"_id"`
+	UserID int32       `json:"user_id"`
+}
+
+func (q *Queries) GetResultDetails(ctx context.Context, arg GetResultDetailsParams) (Woodpeakersetresult, error) {
+	row := q.db.QueryRow(ctx, getResultDetails, arg.ID, arg.UserID)
+	var i Woodpeakersetresult
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SetID,
+		&i.Attemptnumber,
+		&i.Totaltimems,
+		&i.Solvedclean,
+		&i.Failed,
+		&i.Timebucket,
+		&i.Createdat,
+	)
+	return i, err
 }
 
 const getSetReports = `-- name: GetSetReports :many

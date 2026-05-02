@@ -256,3 +256,7 @@ FROM WoodpeakerSetResult
 WHERE set_id = @set_id AND user_id = @user_id
 ORDER BY attemptNumber DESC
 LIMIT 10;
+
+
+-- name: GetResultDetails :one
+SELECT * from WoodpeakerSetResult WHERE _id = $1 AND user_id = $2;

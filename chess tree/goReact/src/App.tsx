@@ -71,6 +71,7 @@ function App() {
             <Route path="/swift" element={<LazySwiftChess />} />
 
             <Route path="/graph" element={<LazyGraphPage />} />
+            <Route path="/graph/:sessionId" element={<LazyGraphPage />} />
 
             <Route path="/wood" element={<LazyWoodpeakPage />} />
             <Route path="/woodpeaker/:id" element={<LazyWoodpeakerSessionPage />} />

@@ -392,6 +392,7 @@ func (ctrl *Controller) GetSessionReports(c *fiber.Ctx) error {
 		})
 	}
 
+	var bucket []int
 	reports, err := ctrl.queries.GetLatestReport(c.Context(), db.GetLatestReportParams{
 		SetID:  setId,
 		UserID: int32(id),
@@ -401,6 +402,9 @@ func (ctrl *Controller) GetSessionReports(c *fiber.Ctx) error {
 			"error": "failed to fetch reports",
 			"err":   err,
 		})
+	}
+	if reports.Timebucket != nil {
+		_ = json.Unmarshal(reports.Timebucket, &bucket)
 	}
 
 	list, errs := ctrl.queries.GetAttemptList(c.Context(), db.GetAttemptListParams{
@@ -416,5 +420,46 @@ func (ctrl *Controller) GetSessionReports(c *fiber.Ctx) error {
 			"data":   "hello sir how are u",
 			"report": reports,
 			"list":   list,
+			"bucket": bucket,
 		})
+}
+
+func (ctrl *Controller) GetResultReportList(c *fiber.Ctx) error {
+	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
+	if !ok || userClaims == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	id, err := strconv.Atoi(userClaims.ID)
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid user id in token",
+		})
+	}
+
+	resultId := c.Params("resultId")
+	var pgResultId pgtype.UUID
+	if err := pgResultId.Scan(resultId); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid result id"})
+	}
+
+	data, err := ctrl.queries.GetResultDetails(c.Context(), db.GetResultDetailsParams{
+		ID:     pgResultId,
+		UserID: int32(id),
+	})
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch result details"})
+	}
+
+	var bucket []int
+
+	if data.Timebucket != nil {
+		_ = json.Unmarshal(data.Timebucket, &bucket)
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"message": "succesfully fetched result details",
+		"data":    data,
+		"bucket":  bucket,
+	})
 }
