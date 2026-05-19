@@ -212,6 +212,99 @@ done:
 	})
 }
 
+func (ctrl *Controller) StartFreemiumAnalysis(c *fiber.Ctx) error {
+	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
+	if !ok || userClaims == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+	if utils.Client == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "stockfish client not initialized",
+		})
+	}
+
+	username := strings.TrimSpace(c.Query("username"))
+	if username == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "username is required",
+		})
+	}
+
+	maxGames := 3
+	if rawMaxGames := strings.TrimSpace(c.Query("max_games")); rawMaxGames != "" {
+		parsed, err := strconv.Atoi(rawMaxGames)
+		if err != nil || parsed <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "max_games should be a positive number",
+			})
+		}
+		if parsed < maxGames {
+			maxGames = parsed
+		}
+	}
+
+	usrGames, err := utils.FetchProcess(username)
+	if err != nil {
+		fmt.Println("failed to fetch games for freemium analysis:", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	evalGames := utils.EvaluateAllGames(usrGames, username)
+	if len(evalGames) > maxGames {
+		evalGames = evalGames[:maxGames]
+	}
+
+	type freemiumGameResult struct {
+		GameID         string                  `json:"game_id"`
+		GameURL        string                  `json:"game_url"`
+		PlayerColor    string                  `json:"player_color"`
+		OpponentName   string                  `json:"opponent_name"`
+		OpponentRating int                     `json:"opponent_rating"`
+		TimeClass      string                  `json:"time_class"`
+		Result         string                  `json:"result"`
+		IssueCount     int                     `json:"issue_count"`
+		PuzzleCount    int                     `json:"puzzle_count"`
+		Issues         []types.MoveIssue       `json:"issues"`
+		Puzzles        []Processpipline.Puzzle `json:"puzzles"`
+	}
+
+	gameResults := make([]freemiumGameResult, 0, len(evalGames))
+	totalIssues := 0
+	totalPuzzles := 0
+
+	for _, game := range evalGames {
+		issues, puzzles := Processpipline.GenerateFreemiumPuzzles(game.Moves, utils.Client, game.IsWhite)
+		totalIssues += len(issues)
+		totalPuzzles += len(puzzles)
+		gameResults = append(gameResults, freemiumGameResult{
+			GameID:         game.GameID,
+			GameURL:        game.GameURL,
+			PlayerColor:    game.PlayerColor,
+			OpponentName:   game.OpponentName,
+			OpponentRating: game.OpponentRating,
+			TimeClass:      game.TimeClass,
+			Result:         game.Result,
+			IssueCount:     len(issues),
+			PuzzleCount:    len(puzzles),
+			Issues:         issues,
+			Puzzles:        puzzles,
+		})
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"message":         "freemium analysis completed",
+		"username":        username,
+		"processed_games": len(gameResults),
+		"total_issues":    totalIssues,
+		"total_puzzles":   totalPuzzles,
+		"data":            gameResults,
+	})
+}
+
 func (ctrl *Controller) GetProcessedGames(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*utils.JWTClaims)
 	if !ok || userClaims == nil {

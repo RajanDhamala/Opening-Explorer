@@ -17,6 +17,7 @@ func GameRouter(app *fiber.App, controller *Controllers.Controller) {
 	})
 
 	GameRouter.Get("/process", middlewares.UserAuthenticate, controller.StartProcessing)
+	GameRouter.Get("/freemium/process", middlewares.UserAuthenticate, controller.StartFreemiumAnalysis)
 
 	GameRouter.Get("/list", middlewares.UserAuthenticate, controller.GetProcessedGames)
 

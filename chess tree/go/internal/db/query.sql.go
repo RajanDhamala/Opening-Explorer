@@ -592,7 +592,7 @@ SELECT _id, fen, moves, rating, themes, openingtags
 FROM puzzles
 WHERE rating BETWEEN $1 AND $2
   AND (
-    array_length($3::TEXT[], 1) IS NULL
+    COALESCE(cardinality($3::TEXT[]), 0) = 0
     OR themes && $3::TEXT[]
   )
 ORDER BY RANDOM()
@@ -650,12 +650,13 @@ func (q *Queries) GetPuzzlesFallback(ctx context.Context, arg GetPuzzlesFallback
 const getPuzzlesFast = `-- name: GetPuzzlesFast :many
 SELECT _id, fen, moves, rating, themes, openingtags
 FROM puzzles
-TABLESAMPLE BERNOULLI(50)
+TABLESAMPLE SYSTEM(10)
 WHERE rating BETWEEN $1 AND $2
   AND (
-    array_length($3::TEXT[], 1) IS NULL
+    COALESCE(cardinality($3::TEXT[]), 0) = 0
     OR themes && $3::TEXT[]
   )
+ORDER BY RANDOM()
 LIMIT $4
 `
 
