@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -111,23 +111,57 @@ interface PuzzleBoardProps {
   onSolved: () => void;
   onFailed: () => void;
   onUserMoveStart?: () => void;
-  onPuzzleReady?: () => void;
-  initialMoveDelay?: number;
 }
 
-function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart, onPuzzleReady, initialMoveDelay = 150 }: PuzzleBoardProps) {
-  const chessRef = useRef<Chess>(new Chess());
-  const [position, setPosition] = useState<string>(START_FEN);
-  const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
-  const [isUserTurn, setIsUserTurn] = useState(false);
+const createChessFromFen = (fen: string) => {
+  const chess = new Chess();
+  chess.load(sanitizeFen(fen));
+  return chess;
+};
+
+const createPuzzleStartState = (puzzle: PuzzleItem) => {
+  const chess = createChessFromFen(puzzle.fen);
+  let currentMoveIndex = 0;
+  let isUserTurn = false;
+
+  const firstMove = puzzle.moves[0];
+  if (firstMove) {
+    const parsed = parseUciMove(firstMove);
+    if (parsed && chess.move(parsed)) {
+      currentMoveIndex = 1;
+      isUserTurn = true;
+    }
+  }
+
+  return {
+    chess,
+    position: chess.fen(),
+    currentMoveIndex,
+    isUserTurn,
+  };
+};
+
+function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart }: PuzzleBoardProps) {
+  const chessRef = useRef<Chess | null>(null);
+  if (chessRef.current === null) {
+    try {
+      chessRef.current = createPuzzleStartState(puzzle).chess;
+    } catch (err) {
+      console.error("Failed to load puzzle FEN:", puzzle.fen, err);
+      chessRef.current = new Chess();
+    }
+  }
+
+  const [position, setPosition] = useState<string>(() => chessRef.current?.fen() ?? START_FEN);
+  const [currentMoveIndex, setCurrentMoveIndex] = useState(() => puzzle.moves.length > 0 ? 1 : 0);
+  const [isUserTurn, setIsUserTurn] = useState(() => puzzle.moves.length > 0);
   const [feedback, setFeedback] = useState<PuzzleFeedback>("idle");
   const [premoves, setPremoves] = useState<PremoveState[]>([]);
   const [isInputLocked, setIsInputLocked] = useState(false);
-  const [boardVisible, setBoardVisible] = useState(false);
   const autoMoveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedbackResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const readyRafOneRef = useRef<number | null>(null);
-  const readyRafTwoRef = useRef<number | null>(null);
+  const solveFeedbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const solveAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearAutoMove = () => {
     if (autoMoveRef.current) {
@@ -147,84 +181,50 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart, onPuzzleRead
     setPremoves([]);
   }, []);
 
-  const clearReadyRafs = useCallback(() => {
-    if (readyRafOneRef.current !== null) {
-      cancelAnimationFrame(readyRafOneRef.current);
-      readyRafOneRef.current = null;
+  const clearSolveTimers = useCallback(() => {
+    if (solveFeedbackRef.current) {
+      clearTimeout(solveFeedbackRef.current);
+      solveFeedbackRef.current = null;
     }
-    if (readyRafTwoRef.current !== null) {
-      cancelAnimationFrame(readyRafTwoRef.current);
-      readyRafTwoRef.current = null;
+    if (solveAdvanceRef.current) {
+      clearTimeout(solveAdvanceRef.current);
+      solveAdvanceRef.current = null;
     }
   }, []);
-
-  const notifyPuzzleReadyAfterPaint = useCallback(() => {
-    clearReadyRafs();
-    readyRafOneRef.current = requestAnimationFrame(() => {
-      readyRafOneRef.current = null;
-      readyRafTwoRef.current = requestAnimationFrame(() => {
-        readyRafTwoRef.current = null;
-        setBoardVisible(true);
-        onPuzzleReady?.();
-      });
-    });
-  }, [clearReadyRafs, onPuzzleReady]);
 
   const clearPuzzleTimers = useCallback(() => {
     clearAutoMove();
     clearFeedbackReset();
-    clearReadyRafs();
-  }, [clearFeedbackReset, clearReadyRafs]);
+    clearSolveTimers();
+  }, [clearFeedbackReset, clearSolveTimers]);
 
   const userColor = useMemo(() => getUserColorFromFen(puzzle.fen), [puzzle.fen]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     clearPuzzleTimers();
     clearPremoves();
     setIsInputLocked(false);
-    setBoardVisible(false);
     try {
-      const chess = new Chess();
-      chess.load(sanitizeFen(puzzle.fen));
+      const startState = createPuzzleStartState(puzzle);
+      const { chess } = startState;
       chessRef.current = chess;
 
-      setPosition(chess.fen());
-      setCurrentMoveIndex(0);
+      setPosition(startState.position);
+      setCurrentMoveIndex(startState.currentMoveIndex);
+      setIsUserTurn(startState.isUserTurn);
       setFeedback("idle");
 
-      if (puzzle.moves.length === 0) {
-        notifyPuzzleReadyAfterPaint();
+      if (puzzle.moves.length === 0 || startState.currentMoveIndex >= puzzle.moves.length) {
         onSolved();
-        return;
       }
-
-      setIsUserTurn(false);
-      autoMoveRef.current = setTimeout(() => {
-        playMoveOnBoard(chess, puzzle.moves[0]);
-        setCurrentMoveIndex(1);
-        setIsUserTurn(true);
-        setFeedback("idle");
-        notifyPuzzleReadyAfterPaint();
-      }, initialMoveDelay);
     } catch (err) {
       console.error("Failed to load puzzle FEN:", puzzle.fen, err);
-      setBoardVisible(true);
-      notifyPuzzleReadyAfterPaint();
     }
 
     return () => {
       clearPuzzleTimers();
     };
-  }, [clearPremoves, clearPuzzleTimers, notifyPuzzleReadyAfterPaint, onSolved, puzzle._id, puzzle.fen, puzzle.moves, initialMoveDelay]);
-
-  const playMoveOnBoard = (chess: Chess, uci: string): boolean => {
-    const parsed = parseUciMove(uci);
-    if (!parsed) return false;
-    const result = chess.move(parsed);
-    if (!result) return false;
-    setPosition(chess.fen());
-    return true;
-  };
+  }, [clearPremoves, clearPuzzleTimers, onSolved, puzzle]);
 
   const showFeedback = useCallback((type: PuzzleFeedback) => {
     setFeedback(type);
@@ -244,24 +244,27 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart, onPuzzleRead
   }, [clearFeedbackReset, clearPremoves, onFailed, showFeedback]);
 
   const handleBoardMove = useCallback((move: Move) => {
+    const chess = chessRef.current;
+    if (!chess) return;
+
     if (feedback === "solved") {
-      chessRef.current.undo();
-      setPosition(chessRef.current.fen());
+      chess.undo();
+      setPosition(chess.fen());
       return;
     }
 
     const expectedUci = puzzle.moves[currentMoveIndex];
     if (!expectedUci || isInputLocked) {
-      chessRef.current.undo();
-      setPosition(chessRef.current.fen());
+      chess.undo();
+      setPosition(chess.fen());
       return;
     }
 
     const playedUciKey = getMoveUciKey(move.from, move.to, move.promotion);
     const expectedUciKey = getExpectedUciKey(expectedUci);
     if (playedUciKey !== expectedUciKey) {
-      chessRef.current.undo();
-      setPosition(chessRef.current.fen());
+      chess.undo();
+      setPosition(chess.fen());
       handleWrongMove();
       return;
     }
@@ -274,9 +277,13 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart, onPuzzleRead
     if (currentMoveIndex + 1 >= puzzle.moves.length) {
       setIsUserTurn(false);
       setIsInputLocked(true);
-      setTimeout(() => {
+      solveFeedbackRef.current = setTimeout(() => {
+        solveFeedbackRef.current = null;
         showFeedback("solved");
-        setTimeout(onSolved, 250);
+        solveAdvanceRef.current = setTimeout(() => {
+          solveAdvanceRef.current = null;
+          onSolved();
+        }, 250);
       }, 250);
       return;
     }
@@ -286,18 +293,22 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart, onPuzzleRead
     autoMoveRef.current = setTimeout(() => {
       const opponentParsed = parseUciMove(opponentUci);
       if (opponentParsed) {
-        const result = chessRef.current.move(opponentParsed);
+        const result = chess.move(opponentParsed);
         if (result) {
-          setPosition(chessRef.current.fen());
+          setPosition(chess.fen());
         }
       }
 
       if (nextUserMoveIndex >= puzzle.moves.length) {
         setIsInputLocked(true);
-        setTimeout(() => {
+        solveFeedbackRef.current = setTimeout(() => {
+          solveFeedbackRef.current = null;
           showFeedback("solved");
           setIsUserTurn(false);
-          setTimeout(onSolved, 250);
+          solveAdvanceRef.current = setTimeout(() => {
+            solveAdvanceRef.current = null;
+            onSolved();
+          }, 250);
         }, 200);
         return;
       }
@@ -312,7 +323,6 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart, onPuzzleRead
     feedback,
     handleWrongMove,
     isInputLocked,
-    isUserTurn,
     onSolved,
     onUserMoveStart,
     puzzle.moves,
@@ -328,6 +338,7 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart, onPuzzleRead
     ? (userColor === "w" ? "b" : "w")
     : userColor;
   const boardFlipped = userColor === "b";
+  const chess = chessRef.current;
 
   const totalMoves = Math.ceil((puzzle.moves.length - 1) / 2);
   const completedMoves = Math.floor((currentMoveIndex - 1) / 2);
@@ -349,28 +360,27 @@ function PuzzleBoard({ puzzle, onSolved, onFailed, onUserMoveStart, onPuzzleRead
 
       <div className="w-full rounded-2xl overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/[0.07]">
         <div className="w-full aspect-square">
-          <ChessBoard
-            chess={chessRef.current}
-            position={position}
-            onPositionChange={setPosition}
-            onMove={handleBoardMove}
-            playerColor={boardPlayerColor}
-            flipped={boardFlipped}
-            premoves={premoves}
-            onPremovesChange={setPremoves}
-            canQueuePremove={canQueuePremove}
-            boardThemePreset="chessComClassic"
-            boardTheme={{
-              light: LICHESS_LIGHT_SQUARE,
-              dark: LICHESS_DARK_SQUARE,
-            }}
-            enableSounds={true}
-            fillContainer={true}
-            className={cn(
-              "w-full h-full transition-opacity duration-100",
-              boardVisible ? "opacity-100" : "opacity-0"
-            )}
-          />
+          {chess && (
+            <ChessBoard
+              chess={chess}
+              position={position}
+              onPositionChange={setPosition}
+              onMove={handleBoardMove}
+              playerColor={boardPlayerColor}
+              flipped={boardFlipped}
+              premoves={premoves}
+              onPremovesChange={setPremoves}
+              canQueuePremove={canQueuePremove}
+              boardThemePreset="chessComClassic"
+              boardTheme={{
+                light: LICHESS_LIGHT_SQUARE,
+                dark: LICHESS_DARK_SQUARE,
+              }}
+              enableSounds={true}
+              fillContainer={true}
+              className="w-full h-full"
+            />
+          )}
         </div>
       </div>
 
@@ -402,7 +412,6 @@ export default function WoodpeakerSessionPage() {
   const [score, setScore] = useState({ correct: 0, wrong: 0 });
   const [clockRunning, setClockRunning] = useState(false);
   const [clockResetToken, setClockResetToken] = useState(0);
-  const [boardTransitioning, setBoardTransitioning] = useState(false);
 
   const clockElapsedRef = useRef(0);
   const timeBucketsRef = useRef<number[]>([]);
@@ -446,7 +455,6 @@ export default function WoodpeakerSessionPage() {
       sessionStartedRef.current = false;
       setClockResetToken((value) => value + 1);
       setScore({ correct: 0, wrong: 0 });
-      setBoardTransitioning(true);
 
       try {
         const { data } = await axios.get(`http://localhost:3030/woodpeaker/item/${sessionId}`, { withCredentials: true });
@@ -456,7 +464,6 @@ export default function WoodpeakerSessionPage() {
 
         setPuzzles(normalized);
         setCurrentPuzzleIndex(0);
-        setBoardTransitioning(normalized.length > 0);
         if (normalized.length === 0) setClockRunning(false);
       } catch (err) {
         console.error(err);
@@ -514,22 +521,11 @@ export default function WoodpeakerSessionPage() {
       return;
     }
 
-    // Step 1: paint skeleton first
-    setBoardTransitioning(true);
-    // Step 2: only mount new PuzzleBoard after skeleton is on screen
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setCurrentPuzzleIndex(nextIndex);
-      });
-    });
+    setCurrentPuzzleIndex(nextIndex);
   }, [puzzles, currentPuzzleIndex, pushTimestampBucket, sendBucketToBackend]);
 
   const handleFailed = useCallback(() => {
     setScore((s) => ({ ...s, wrong: s.wrong + 1 }));
-  }, []);
-
-  const handlePuzzleReady = useCallback(() => {
-    setBoardTransitioning(false);
   }, []);
 
   const goTo = (idx: number) => {
@@ -537,12 +533,7 @@ export default function WoodpeakerSessionPage() {
     if (idx > currentPuzzleIndex) {
       pushTimestampBucket(clockElapsedRef.current);
     }
-    setBoardTransitioning(true);
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setCurrentPuzzleIndex(idx);
-      });
-    });
+    setCurrentPuzzleIndex(idx);
   };
 
   const progressWidth = useMemo(() => {
@@ -583,25 +574,11 @@ export default function WoodpeakerSessionPage() {
             <div className="w-full max-w-[760px] mx-auto lg:mx-0">
               <div className="relative">
                 <PuzzleBoard
-                  key={`${currentPuzzle._id}-${currentPuzzleIndex}`}
                   puzzle={currentPuzzle}
                   onSolved={handleSolved}
                   onFailed={handleFailed}
                   onUserMoveStart={ensureSessionStarted}
-                  onPuzzleReady={handlePuzzleReady}
-                  initialMoveDelay={150}
                 />
-                {boardTransitioning && (
-                  <div className="absolute inset-0 z-20 rounded-2xl overflow-hidden pointer-events-none">
-                    <div className="h-8 rounded-xl bg-white/[0.03]" />
-                    <div className="mt-3 w-full aspect-square rounded-2xl animate-pulse bg-zinc-900" />
-                    <div className="flex items-center justify-center gap-1.5 mt-2">
-                      {Array.from({ length: 4 }).map((_, i) => (
-                        <div key={i} className="w-1.5 h-1.5 rounded-full bg-white/15" />
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 

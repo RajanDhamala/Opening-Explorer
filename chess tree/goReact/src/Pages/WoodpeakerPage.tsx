@@ -22,6 +22,7 @@ import {
   Trash2,
   X,
   Zap,
+  TriangleAlert,
 } from "lucide-react";
 
 
@@ -95,6 +96,10 @@ const schema = z.object({
   showTimer: z.boolean(),
 });
 type FormData = z.infer<typeof schema>;
+
+const THEME_LABEL_BY_ID = new Map<string, string>(THEMES.map((theme) => [theme.id, theme.label]));
+
+const formatTheme = (theme: string) => THEME_LABEL_BY_ID.get(theme) ?? theme;
 
 
 interface WoodpeakerSession {
@@ -249,6 +254,7 @@ function DeleteModal({
     }
   };
 
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={onClose} />
@@ -310,17 +316,15 @@ function SessionCard({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const progress =
-    session.solvedpuzzles !== undefined
-      ? Math.round((session.solvedpuzzles / session.totalpuzzles) * 100)
-      : null;
+  const solved = session.solvedpuzzles ?? 0;
+  const progress = session.totalpuzzles > 0 ? Math.round((solved / session.totalpuzzles) * 100) : 0;
 
   const statusMeta =
     session.status === "completed"
-      ? { label: "Completed", cls: "text-emerald-400 bg-emerald-400/10 border-emerald-500/25" }
+      ? { label: "Completed", cls: "text-[#9fc071] bg-[#9fc071]/10 border-[#9fc071]/25" }
       : session.status === "active"
-        ? { label: "In Progress", cls: "text-sky-400 bg-sky-400/10 border-sky-500/25" }
-        : { label: session.status, cls: "text-zinc-500 bg-zinc-800/80 border-zinc-700/50" };
+        ? { label: "In Progress", cls: "text-zinc-200 bg-white/[0.07] border-white/10" }
+        : { label: session.status, cls: "text-zinc-500 bg-black/20 border-white/10" };
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -331,22 +335,31 @@ function SessionCard({
     return () => document.removeEventListener("mousedown", handler);
   }, [menuOpen]);
 
+  const navigate = useNavigate();
+
   return (
-    <div className="group relative bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-2xl transition-all duration-200 hover:shadow-xl hover:shadow-black/40 hover:-translate-y-0.5 overflow-hidden flex flex-col">
-
-      {/* Top accent line on hover */}
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-zinc-600 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-
-      {/* Card body */}
-      <div className="p-6 flex flex-col gap-5 flex-1">
-
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0 cursor-pointer" onClick={onNavigate}>
-            <h3 className="text-base font-bold text-zinc-100 group-hover:text-white transition-colors leading-snug truncate">
+    <article
+      onClick={onNavigate}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onNavigate();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      className="group relative cursor-pointer overflow-hidden rounded-xl border border-white/[0.08] bg-[#211f1c] shadow-sm shadow-black/30 outline-none transition-all duration-200 hover:-translate-y-0.5 hover:border-white/15 hover:bg-[#25221f] focus-visible:ring-2 focus-visible:ring-white/25"
+    >
+      <div className="relative flex min-h-[260px] flex-col p-5">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <span className={cn("mb-3 inline-flex rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]", statusMeta.cls)}>
+              {statusMeta.label}
+            </span>
+            <h3 className="truncate text-[17px] font-semibold leading-tight text-zinc-100 transition-colors group-hover:text-white">
               {session.title || "Untitled Session"}
             </h3>
-            <p className="text-xs text-zinc-700 mt-1.5 tabular-nums">
+            <p className="mt-2 text-xs tabular-nums text-zinc-500">
               {new Date(session.createdat).toLocaleDateString("en-US", {
                 month: "short",
                 day: "numeric",
@@ -356,32 +369,40 @@ function SessionCard({
           </div>
 
           {/* 3-dot menu */}
-          <div ref={menuRef} className="relative shrink-0">
+          <div ref={menuRef} className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setMenuOpen((p) => !p); }}
               className={cn(
-                "w-8 h-8 flex items-center justify-center rounded-lg text-zinc-700 hover:text-zinc-300 hover:bg-zinc-800 transition-all",
-                menuOpen && "bg-zinc-800 text-zinc-300",
+                "relative z-20 flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition-all hover:bg-white/[0.06] hover:text-zinc-100",
+                menuOpen && "bg-white/[0.07] text-zinc-100",
               )}
             >
               <MoreHorizontal size={15} />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-10 z-20 w-44 bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl shadow-black/60 overflow-hidden py-1.5">
+              <div className="absolute right-0 top-10 z-30 w-44 overflow-hidden rounded-lg border border-white/10 bg-[#171614] py-1.5 shadow-2xl shadow-black/70">
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onRename(); }}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800/80 transition-colors text-left"
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-white"
                 >
                   <Pencil size={13} />
                   Rename
                 </button>
-                <div className="h-px bg-zinc-800/80 mx-2 my-1" />
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); navigate(`/graph/${session._id}`); }}
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-white"
+                >
+                  <TriangleAlert size={13} />
+                  Report
+                </button>
+                <div className="mx-2 my-1 h-px bg-white/[0.08]" />
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(); }}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-500 hover:text-red-400 hover:bg-red-500/8 transition-colors text-left"
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
                 >
                   <Trash2 size={13} />
                   Delete
@@ -391,66 +412,96 @@ function SessionCard({
           </div>
         </div>
 
-        {/* Stats grid */}
-        <div className="grid grid-cols-2 gap-2.5 cursor-pointer" onClick={onNavigate}>
-          <div className="flex items-center gap-3 bg-zinc-800/50 rounded-xl px-3.5 py-3">
-            <Target size={13} className="text-zinc-600 shrink-0" />
-            <div>
-              <p className="text-[10px] text-zinc-600 leading-none mb-1 font-medium uppercase tracking-wider">Puzzles</p>
-              <p className="text-sm font-bold text-zinc-200 tabular-nums leading-none">{session.totalpuzzles}</p>
+        <div className="grid grid-cols-2 gap-2.5">
+          <div className="rounded-lg border border-white/[0.06] bg-black/15 px-3.5 py-3">
+            <div className="mb-2 flex items-center gap-2 text-zinc-500">
+              <Target size={13} />
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em]">Puzzles</p>
             </div>
+            <p className="text-xl font-semibold leading-none text-zinc-100 tabular-nums">{session.totalpuzzles}</p>
           </div>
-          <div className="flex items-center gap-3 bg-zinc-800/50 rounded-xl px-3.5 py-3">
-            <BarChart2 size={13} className="text-zinc-600 shrink-0" />
-            <div>
-              <p className="text-[10px] text-zinc-600 leading-none mb-1 font-medium uppercase tracking-wider">Rating</p>
-              <p className="text-sm font-bold text-zinc-200 tabular-nums leading-none">{session.minrating}–{session.maxrating}</p>
+          <div className="rounded-lg border border-white/[0.06] bg-black/15 px-3.5 py-3">
+            <div className="mb-2 flex items-center gap-2 text-zinc-500">
+              <BarChart2 size={13} />
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em]">Rating</p>
             </div>
+            <p className="text-xl font-semibold leading-none text-zinc-100 tabular-nums">{session.minrating}-{session.maxrating}</p>
           </div>
         </div>
 
-        {/* Progress bar */}
-        {progress !== null && (
-          <div className="cursor-pointer" onClick={onNavigate}>
-            <div className="flex justify-between items-center mb-2">
-              <p className="text-xs text-zinc-600 font-medium">Progress</p>
-              <p className="text-xs text-zinc-500 tabular-nums">{progress}%</p>
-            </div>
-            <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-white rounded-full transition-all duration-700"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
+        <div className="mt-5">
+          <div className="mb-2 flex items-center justify-between text-xs">
+            <span className="text-zinc-500">Solved</span>
+            <span className="font-medium tabular-nums text-zinc-300">
+              {solved}/{session.totalpuzzles}
+            </span>
           </div>
-        )}
+          <div className="h-2 overflow-hidden rounded-full bg-black/35 ring-1 ring-white/[0.06]">
+            <div
+              className="h-full rounded-full bg-[#9fc071] transition-all duration-700"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
 
-        {/* Themes + status row */}
-        <div className="flex items-center justify-between gap-3 mt-auto cursor-pointer" onClick={onNavigate}>
-          <div className="flex flex-wrap gap-1.5 flex-1 min-w-0">
-            {session.themes?.slice(0, 3).map((theme) => (
-              <span
-                key={theme}
-                className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-zinc-800 text-zinc-500 border border-zinc-700/60"
-              >
-                {theme}
-              </span>
-            ))}
-            {session.themes?.length > 3 && (
-              <span className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-zinc-800 text-zinc-500 border border-zinc-700/60">
-                +{session.themes.length - 3}
-              </span>
-            )}
-            {(!session.themes || session.themes.length === 0) && (
-              <span className="text-xs text-zinc-700">All themes</span>
-            )}
+        <div className="mt-5 flex flex-wrap gap-1.5">
+          {session.themes?.slice(0, 4).map((theme) => (
+            <span
+              key={theme}
+              className="rounded-md border border-white/[0.06] bg-white/[0.04] px-2 py-1 text-[11px] font-medium text-zinc-400"
+            >
+              {formatTheme(theme)}
+            </span>
+          ))}
+          {session.themes?.length > 4 && (
+            <span className="rounded-md border border-white/[0.06] bg-white/[0.04] px-2 py-1 text-[11px] font-medium text-zinc-500">
+              +{session.themes.length - 4}
+            </span>
+          )}
+          {(!session.themes || session.themes.length === 0) && (
+            <span className="rounded-md border border-white/[0.06] bg-white/[0.04] px-2 py-1 text-[11px] font-medium text-zinc-500">
+              All themes
+            </span>
+          )}
+        </div>
+
+        <div className="mt-auto pt-5">
+          <div className="flex items-center justify-between border-t border-white/[0.07] pt-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-600">Last updated</p>
+              <p className="mt-1 text-xs tabular-nums text-zinc-400">
+                {new Date(session.updatedat).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigate();
+              }}
+              className="inline-flex items-center gap-2 rounded-md bg-zinc-100 px-3 py-2 text-xs font-semibold text-zinc-950 opacity-90 transition hover:bg-white group-hover:opacity-100"
+            >
+              <Play size={12} fill="currentColor" />
+              Train
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/graph/${session._id}`)
+              }}
+              className="inline-flex items-center gap-2 rounded-md bg-zinc-100 px-3 py-2 text-xs font-semibold text-zinc-950 opacity-90 transition hover:bg-white group-hover:opacity-100"
+            >
+              <Play size={12} fill="currentColor" />
+              View Report
+            </button>
           </div>
-          <span className={cn("shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide border", statusMeta.cls)}>
-            {statusMeta.label}
-          </span>
         </div>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -840,114 +891,122 @@ export default function WoodpeakerPage() {
     setSessions((prev) => prev.filter((s) => s._id !== id));
   };
 
+  const totalPuzzles = sessions.reduce((a, s) => a + s.totalpuzzles, 0);
+  const solvedPuzzles = sessions.reduce((a, s) => a + (s.solvedpuzzles ?? 0), 0);
+  const activeSessions = sessions.filter((s) => s.status === "active").length;
+  const completedSessions = sessions.filter((s) => s.status === "completed").length;
+
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
-      {/* Subtle chess grid texture */}
+    <div className="min-h-screen bg-[#161512] text-zinc-100">
       <div
         aria-hidden
-        className="pointer-events-none fixed inset-0 opacity-[0.012]"
+        className="pointer-events-none fixed inset-0 opacity-[0.018]"
         style={{
-          backgroundImage: "repeating-conic-gradient(#ffffff 0% 25%, transparent 0% 50%)",
-          backgroundSize: "48px 48px",
-        }}
-      />
-      {/* Glow at top */}
-      <div
-        aria-hidden
-        className="pointer-events-none fixed top-0 inset-x-0 h-[500px]"
-        style={{
-          background: "radial-gradient(ellipse 70% 50% at 50% -5%, rgba(255,255,255,0.04) 0%, transparent 80%)",
+          backgroundImage: "linear-gradient(#ffffff 1px, transparent 1px), linear-gradient(90deg, #ffffff 1px, transparent 1px)",
+          backgroundSize: "42px 42px",
         }}
       />
 
-      <div className="relative z-10 max-w-6xl mx-auto px-5 sm:px-8 lg:px-10 pt-14 pb-24">
-
-        {/* ── Hero ── */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-8 mb-12">
-          <div className="flex items-center gap-6">
-            <div className="w-[84px] h-[84px] rounded-2xl overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-zinc-800 shrink-0 hidden sm:block">
-              <Chessboard
-                options={{
-                  position: SPLASH_FEN,
-                  allowDragging: false,
-                  boardStyle: { width: "84px", height: "84px" },
-                  darkSquareStyle: { backgroundColor: LICHESS_DARK },
-                  lightSquareStyle: { backgroundColor: LICHESS_LIGHT },
-                }}
-              />
-            </div>
-            <div>
-              <p className="text-[10px] font-black tracking-[0.25em] uppercase text-zinc-700 mb-2.5 select-none">
-                Tactics Training
-              </p>
-              <h1 className="text-[2.25rem] font-black text-white tracking-tighter leading-none mb-3">
-                Woodpecker Method
-              </h1>
-              <p className="text-sm text-zinc-500 leading-relaxed max-w-sm">
-                Build pattern recognition through spaced repetition. Drill, fail, repeat — until tactics become instinct.
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="shrink-0 flex items-center gap-2.5 px-6 py-3.5 rounded-xl bg-white text-zinc-900 text-sm font-black hover:bg-zinc-100 active:scale-[0.97] transition-all shadow-xl shadow-black/30 tracking-tight"
-          >
-            <Plus size={15} strokeWidth={2.5} />
-            New Set
-          </button>
-        </div>
-
-        {/* ── Stats strip ── */}
-        {!loading && sessions.length > 0 && (
-          <div className="grid grid-cols-3 gap-4 mb-10">
-            {[
-              { label: "Total Sets", value: sessions.length },
-              { label: "Total Puzzles", value: sessions.reduce((a, s) => a + s.totalpuzzles, 0).toLocaleString() },
-              { label: "Active", value: sessions.filter((s) => s.status === "active").length },
-            ].map((stat) => (
-              <div key={stat.label} className="bg-zinc-900 border border-zinc-800 rounded-2xl px-5 py-4">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 mb-2">{stat.label}</p>
-                <p className="text-2xl font-black text-white tabular-nums">{stat.value}</p>
+      <div className="relative z-10 mx-auto max-w-7xl px-4 pb-20 pt-6 sm:px-6 lg:px-8">
+        <header className="mb-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <section className="rounded-xl border border-white/[0.08] bg-[#211f1c] p-5 shadow-sm shadow-black/30 sm:p-6">
+            <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-4">
+                <div className="hidden h-[92px] w-[92px] shrink-0 overflow-hidden rounded-lg ring-1 ring-black/40 sm:block">
+                  <Chessboard
+                    options={{
+                      position: SPLASH_FEN,
+                      allowDragging: false,
+                      boardStyle: { width: "92px", height: "92px" },
+                      darkSquareStyle: { backgroundColor: LICHESS_DARK },
+                      lightSquareStyle: { backgroundColor: LICHESS_LIGHT },
+                    }}
+                  />
+                </div>
+                <div>
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                    Tactics trainer
+                  </p>
+                  <h1 className="text-3xl font-semibold leading-tight tracking-normal text-white sm:text-4xl">
+                    Woodpecker Method
+                  </h1>
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-zinc-400">
+                    Build pattern recognition with focused repetition, clean sessions, and puzzle sets that feel close to the board view.
+                  </p>
+                </div>
               </div>
-            ))}
-          </div>
-        )}
 
-        {/* ── Sessions ── */}
-        <div>
-          <div className="flex items-center justify-between mb-6">
-            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-zinc-600">Your Sessions</p>
+              <button
+                type="button"
+                onClick={() => setOpen(true)}
+                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-md bg-zinc-100 px-5 text-sm font-semibold text-zinc-950 shadow-sm shadow-black/30 transition hover:bg-white active:scale-[0.98]"
+              >
+                <Plus size={16} strokeWidth={2.4} />
+                New Set
+              </button>
+            </div>
+          </section>
+
+          <aside className="rounded-xl border border-white/[0.08] bg-[#211f1c] p-5 shadow-sm shadow-black/30">
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Overview</p>
+              <span className="rounded-md bg-white/[0.06] px-2 py-1 text-[11px] text-zinc-400">
+                {loading ? "Loading" : `${sessions.length} sets`}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { label: "Puzzles", value: totalPuzzles.toLocaleString() },
+                { label: "Solved", value: solvedPuzzles.toLocaleString() },
+                { label: "Active", value: activeSessions },
+                { label: "Done", value: completedSessions },
+              ].map((stat) => (
+                <div key={stat.label} className="rounded-lg border border-white/[0.06] bg-black/15 px-3 py-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-600">{stat.label}</p>
+                  <p className="mt-1 text-xl font-semibold tabular-nums text-zinc-100">{stat.value}</p>
+                </div>
+              ))}
+            </div>
+          </aside>
+        </header>
+
+        <main className="rounded-xl border border-white/[0.08] bg-[#1b1a17] p-4 shadow-sm shadow-black/30 sm:p-5">
+          <div className="mb-5 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Your sessions</p>
+              <h2 className="mt-1 text-lg font-semibold text-zinc-100">Training sets</h2>
+            </div>
             {!loading && sessions.length > 0 && (
-              <span className="text-xs text-zinc-700 tabular-nums">{sessions.length} total</span>
+              <span className="rounded-md border border-white/[0.08] px-3 py-1.5 text-xs tabular-nums text-zinc-400">
+                {sessions.length} total
+              </span>
             )}
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center py-32">
-              <Loader2 className="animate-spin text-zinc-700 w-6 h-6" />
+            <div className="flex items-center justify-center py-28">
+              <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
             </div>
           ) : sessions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-28 border border-dashed border-zinc-800 rounded-2xl">
-              <div className="w-14 h-14 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-5">
-                <Target size={22} className="text-zinc-700" />
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-white/[0.1] bg-black/10 px-6 py-24">
+              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.04]">
+                <Target size={22} className="text-zinc-500" />
               </div>
-              <h3 className="text-sm font-bold text-zinc-500 mb-2">No sessions yet</h3>
-              <p className="text-sm text-zinc-700 text-center max-w-xs mb-8 leading-relaxed">
+              <h3 className="mb-2 text-sm font-semibold text-zinc-300">No sessions yet</h3>
+              <p className="mb-8 max-w-xs text-center text-sm leading-6 text-zinc-500">
                 Create your first training set and start building tactical instincts.
               </p>
               <button
                 type="button"
                 onClick={() => setOpen(true)}
-                className="flex items-center gap-2 px-5 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white text-sm font-bold transition-all"
+                className="inline-flex items-center gap-2 rounded-md bg-zinc-100 px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-white"
               >
                 <Plus size={14} />
                 Create your first set
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {sessions.map((session) => (
                 <SessionCard
                   key={session._id}
@@ -959,7 +1018,7 @@ export default function WoodpeakerPage() {
               ))}
             </div>
           )}
-        </div>
+        </main>
       </div>
 
       {/* ── Modals ── */}

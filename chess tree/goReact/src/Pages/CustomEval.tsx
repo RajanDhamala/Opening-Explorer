@@ -1,13 +1,15 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import axios from "axios";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Chess, type Square } from "chess.js";
-import { Chessboard } from "react-chessboard";
+import { useQuery } from "@tanstack/react-query";
+import { Chess, type Color, type Move, type PieceSymbol, type Square } from "chess.js";
+import { ChessBoard, type Arrow } from "swiftchess";
+import swiftChessStyles from "swiftchess/style.css?inline";
 import { EvalBar } from "../components/EvalBar";
 import { EngineLines } from "../components/EngineLines";
 import { MoveNavigator } from "../components/MoveNavigator";
 import { PuzzleProgress } from "../components/PuzzleProgress";
-import { uciToSan, pvToSan, type EngineLine, type PuzzleAttempt, type BoardArrow, colors } from "../components/puzzleUtils";
+import { uciToSan, pvToSan, type EngineLine, type PuzzleAttempt, colors } from "../components/puzzleUtils";
 
 interface Puzzle {
   _id: string;
@@ -71,16 +73,54 @@ const ISSUE_TYPES = [
 const MIN_EVAL_UPDATE_DEPTH = 12;
 const EVAL_API = "http://localhost:3030/games/eval";
 
-const fetchPuzzles = async (type: string): Promise<Puzzle[]> => {
+const ScopedSwiftChessStyles = ({ children }: { children: ReactNode }) => {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [mountNode, setMountNode] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const shadowRoot = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    const mount = document.createElement("div");
+
+    style.textContent = swiftChessStyles;
+    mount.style.width = "100%";
+    mount.style.height = "100%";
+    shadowRoot.append(style, mount);
+    setMountNode(mount);
+
+    return () => {
+      setMountNode(null);
+      style.remove();
+      mount.remove();
+    };
+  }, []);
+
+  return (
+    <div ref={hostRef} className="w-full h-full">
+      {mountNode ? createPortal(children, mountNode) : null}
+    </div>
+  );
+};
+
+const fetchPuzzles = async (type: string, signal: AbortSignal): Promise<Puzzle[]> => {
   const url = type === "all"
     ? "http://localhost:3030/games/puzzles"
     : `http://localhost:3030/games/puzzles/${type}`;
-  const response = await axios.get<PuzzlesResponse>(url, { withCredentials: true });
+  const response = await axios.get<PuzzlesResponse>(url, {
+    withCredentials: true,
+    signal,
+  });
   return Array.isArray(response.data?.puzzles) ? response.data.puzzles : [];
 };
 
-const evalPosition = async (fen: string): Promise<EvalApiResponse> => {
-  const response = await axios.post<EvalApiResponse>(EVAL_API, { fen }, { withCredentials: true });
+const evalPosition = async (fen: string, signal: AbortSignal): Promise<EvalApiResponse> => {
+  const response = await axios.post<EvalApiResponse>(EVAL_API, { fen }, {
+    withCredentials: true,
+    signal,
+  });
   return response.data;
 };
 
@@ -97,31 +137,45 @@ const CustomEval = () => {
   const [lastExpectedMoveSan, setLastExpectedMoveSan] = useState("");
 
   const [status, setStatus] = useState<"playing" | "correct" | "wrong" | "solution">("playing");
-  const [arrows, setArrows] = useState<BoardArrow[]>([]);
+  const [arrows, setArrows] = useState<Arrow[]>([]);
   const [showEngine, setShowEngine] = useState(() => localStorage.getItem("puzzle_showEngine") === "true");
 
   const [engineLines, setEngineLines] = useState<EngineLine[]>([]);
   const [engineDepth, setEngineDepth] = useState(0);
   const [stableEngineEval, setStableEngineEval] = useState<{ score: number | null; mate: number | null } | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isPlayingLine, setIsPlayingLine] = useState(false);
 
-  const currentAnalysisAbortRef = useRef<AbortController | null>(null);
   const playLineTimeoutRef = useRef<number | null>(null);
-  const queryClient = useQueryClient();
 
   const { data: puzzles = [], isLoading, isError } = useQuery({
     queryKey: ["puzzles", selectedType],
-    queryFn: () => fetchPuzzles(selectedType),
+    queryFn: ({ signal }) => fetchPuzzles(selectedType, signal),
   });
 
   const puzzle = puzzles[puzzleIndex] || null;
   const currentFen = positionHistory[currentMoveIndex + 1] || puzzle?.fen || "";
   const isFlipped = puzzle?.playercolor === "black";
+  const boardChess = useMemo(() => {
+    try {
+      return new Chess(currentFen);
+    } catch {
+      return new Chess();
+    }
+  }, [currentFen]);
+  const sideToMove: Color = currentFen.split(" ")[1] === "b" ? "b" : "w";
+  const canInteractWithBoard = !isPlayingLine
+    && (status !== "playing" || moveHistory.length === 0 || currentMoveIndex === moveHistory.length - 1);
+  const boardPlayerColor: Color = canInteractWithBoard
+    ? sideToMove
+    : sideToMove === "w" ? "b" : "w";
 
-  useQuery({
+  const {
+    data: evaluationData,
+    isFetching: isAnalyzing,
+    refetch: refetchEvaluation,
+  } = useQuery({
     queryKey: ["eval", currentFen],
-    queryFn: () => evalPosition(currentFen),
+    queryFn: ({ signal }) => evalPosition(currentFen, signal),
     enabled: showEngine && !!currentFen,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
@@ -130,82 +184,50 @@ const CustomEval = () => {
   useEffect(() => {
     return () => {
       if (playLineTimeoutRef.current) clearTimeout(playLineTimeoutRef.current);
-      if (currentAnalysisAbortRef.current) currentAnalysisAbortRef.current.abort();
     };
   }, []);
 
-  const analyzePosition = useCallback(async (fen: string) => {
-    if (!showEngine || !fen) return;
-
-    if (currentAnalysisAbortRef.current) {
-      currentAnalysisAbortRef.current.abort();
-    }
-    const controller = new AbortController();
-    currentAnalysisAbortRef.current = controller;
-
+  useEffect(() => {
     setEngineLines([]);
     setEngineDepth(0);
     setStableEngineEval(null);
-    setIsAnalyzing(true);
+  }, [currentFen, showEngine]);
 
-    try {
-      // Check cache first
-      const cached = queryClient.getQueryData<EvalApiResponse>(["eval", fen]);
-      const data = cached ?? await queryClient.fetchQuery<EvalApiResponse>({
-        queryKey: ["eval", fen],
-        queryFn: () => evalPosition(fen),
-        staleTime: 5 * 60 * 1000,
+  useEffect(() => {
+    if (!showEngine || !currentFen || !evaluationData) return;
+
+    const { evaluation } = evaluationData;
+    const turnMultiplier = currentFen.split(" ")[1] === "w" ? 1 : -1;
+    const lines: EngineLine[] = evaluation.lines.map((line, idx) => {
+      const score = line.score_cp !== null ? line.score_cp * turnMultiplier : null;
+      const mate = line.mate !== null ? line.mate * turnMultiplier : null;
+      const pvSan = pvToSan(currentFen, line.pv);
+      return {
+        pvIdx: idx,
+        depth: line.depth,
+        score,
+        mate,
+        pv: line.pv,
+        pvSan,
+      };
+    });
+
+    setEngineLines(lines);
+    setEngineDepth(evaluation.depth);
+
+    if (evaluation.depth >= MIN_EVAL_UPDATE_DEPTH && lines.length > 0) {
+      setStableEngineEval({
+        score: lines[0].score ?? null,
+        mate: lines[0].mate ?? null,
       });
-
-      if (controller.signal.aborted) return;
-
-      const { evaluation } = data;
-      const turn = fen.split(" ")[1];
-      const turnMultiplier = turn === "w" ? 1 : -1;
-
-      const lines: EngineLine[] = evaluation.lines.map((line, idx) => {
-        const score = line.score_cp !== null ? line.score_cp * turnMultiplier : null;
-        const mate = line.mate !== null ? line.mate * turnMultiplier : null;
-        const pvSan = pvToSan(fen, line.pv);
-        return {
-          pvIdx: idx,
-          depth: line.depth,
-          score,
-          mate,
-          pv: line.pv,
-          pvSan,
-        };
-      });
-
-      setEngineLines(lines);
-
-      if (evaluation.depth >= MIN_EVAL_UPDATE_DEPTH && lines.length > 0) {
-        setEngineDepth(evaluation.depth);
-        setStableEngineEval({
-          score: lines[0].score ?? null,
-          mate: lines[0].mate ?? null,
-        });
-      } else {
-        setEngineDepth(evaluation.depth);
-      }
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name === "CanceledError") return;
-      console.error("Eval API error:", err);
-    } finally {
-      if (!controller.signal.aborted) {
-        setIsAnalyzing(false);
-      }
     }
-  }, [showEngine, queryClient]);
+  }, [currentFen, evaluationData, showEngine]);
 
   useEffect(() => {
     if (puzzle) {
       if (playLineTimeoutRef.current) {
         clearTimeout(playLineTimeoutRef.current);
         playLineTimeoutRef.current = null;
-      }
-      if (currentAnalysisAbortRef.current) {
-        currentAnalysisAbortRef.current.abort();
       }
       setIsPlayingLine(false);
       setPositionHistory([puzzle.fen]);
@@ -218,18 +240,8 @@ const CustomEval = () => {
       setEngineLines([]);
       setEngineDepth(0);
       setStableEngineEval(null);
-
-      if (showEngine) {
-        analyzePosition(puzzle.fen);
-      }
     }
-  }, [puzzle?._id, showEngine, analyzePosition]);
-
-  useEffect(() => {
-    if (currentFen && showEngine) {
-      analyzePosition(currentFen);
-    }
-  }, [currentFen, showEngine, analyzePosition]);
+  }, [puzzle]);
 
   useEffect(() => {
     localStorage.setItem("puzzle_autoAdvance", String(autoAdvance));
@@ -366,7 +378,15 @@ const CustomEval = () => {
     }
   }, [puzzle, status, isPlayingLine, playLineWithDelay]);
 
-  const handlePieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null }): boolean => {
+  const handlePieceDrop = useCallback(({
+    sourceSquare,
+    targetSquare,
+    promotion,
+  }: {
+    sourceSquare: string;
+    targetSquare: string | null;
+    promotion?: PieceSymbol;
+  }): boolean => {
     if (!puzzle || !targetSquare || isPlayingLine) return false;
 
     const isAnalysisMode = status === "solution" || status === "correct" || status === "wrong";
@@ -377,12 +397,12 @@ const CustomEval = () => {
       const move = game.move({
         from: sourceSquare as Square,
         to: targetSquare as Square,
-        promotion: "q",
+        promotion: promotion ?? "q",
       });
       if (!move) return false;
 
       const newFen = game.fen();
-      const userUci = sourceSquare + targetSquare;
+      const userUci = `${sourceSquare}${targetSquare}${move.promotion ?? ""}`;
       const expectedMove = puzzle.solution[expectedPvIndex] || puzzle.bestmove;
 
       const basePositions = positionHistory.slice(0, currentMoveIndex + 2);
@@ -400,7 +420,8 @@ const CustomEval = () => {
           completePuzzle();
           return true;
         }
-        const isCorrect = expectedMove.startsWith(userUci);
+        const expectedUci = expectedMove.slice(0, expectedMove.length > 4 ? 5 : 4).toLowerCase();
+        const isCorrect = expectedUci === userUci.toLowerCase();
 
         if (isCorrect) {
           setLastExpectedMoveSan("");
@@ -462,6 +483,14 @@ const CustomEval = () => {
     }
   }, [puzzle, status, currentFen, currentMoveIndex, moveHistory, positionHistory, isPlayingLine, expectedPvIndex, completePuzzle]);
 
+  const handleBoardMove = useCallback((move: Move) => {
+    handlePieceDrop({
+      sourceSquare: move.from,
+      targetSquare: move.to,
+      promotion: move.promotion,
+    });
+  }, [handlePieceDrop]);
+
   const handleRetry = useCallback(() => {
     if (!puzzle) return;
     setPositionHistory([puzzle.fen]);
@@ -485,10 +514,6 @@ const CustomEval = () => {
     if (puzzle) return { score: puzzle.scorecp, mate: puzzle.mate !== 0 ? puzzle.mate : null };
     return { score: 0, mate: null };
   }, [stableEngineEval, puzzle]);
-
-  const formattedArrows = useMemo(() => {
-    return arrows.map(a => ({ startSquare: a.from, endSquare: a.to, color: a.color }));
-  }, [arrows]);
 
   if (isLoading) {
     return (
@@ -593,17 +618,26 @@ const CustomEval = () => {
               </div>
               <div className="flex-1 w-full flex flex-col">
                 <div className="w-full aspect-square relative">
-                  <Chessboard
-                    options={{
-                      position: currentFen,
-                      onPieceDrop: handlePieceDrop,
-                      boardOrientation: isFlipped ? "black" : "white",
-                      arrows: formattedArrows,
-                      darkSquareStyle: { backgroundColor: "#706b5c" },
-                      lightSquareStyle: { backgroundColor: "#b7b093" },
-                      boardStyle: { width: "100%", height: "100%", aspectRatio: "1/1" },
-                    }}
-                  />
+                  <ScopedSwiftChessStyles>
+                    <ChessBoard
+                      chess={boardChess}
+                      position={currentFen}
+                      onMove={handleBoardMove}
+                      playerColor={boardPlayerColor}
+                      flipped={isFlipped}
+                      canQueuePremove={() => false}
+                      arrows={arrows}
+                      onArrowsChange={setArrows}
+                      boardThemePreset="chessComClassic"
+                      boardTheme={{
+                        dark: "#b58863",
+                        light: "#f0d9b5",
+                      }}
+                      enableSounds={true}
+                      fillContainer={true}
+                      className="w-full h-full"
+                    />
+                  </ScopedSwiftChessStyles>
                 </div>
                 <div className="mt-4 flex flex-col gap-2 w-full">
                   <div className="flex items-center justify-between bg-[#262421] rounded border border-[#3a3836] px-4 py-2">
@@ -712,10 +746,7 @@ const CustomEval = () => {
               enabled={showEngine}
               onToggle={() => setShowEngine(!showEngine)}
               onAnalyze={() => {
-                if (currentFen) {
-                  queryClient.invalidateQueries({ queryKey: ["eval", currentFen] });
-                  analyzePosition(currentFen);
-                }
+                if (currentFen) void refetchEvaluation();
               }}
               onLineClick={(idx) => {
                 if (isPlayingLine) return;

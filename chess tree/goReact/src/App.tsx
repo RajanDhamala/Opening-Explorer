@@ -75,10 +75,6 @@ function App() {
 
             <Route path="/wood" element={<LazyWoodpeakPage />} />
             <Route path="/woodpeaker/:id" element={<LazyWoodpeakerSessionPage />} />
-
-            <Route path="/canvas" element={<LazyCanvasPage />} />
-
-
             <Route path="*" element={<div className="p-10 text-center text-red-500 font-bold">404 | Page Not Found</div>} />
           </Routes>
         </Suspense>
