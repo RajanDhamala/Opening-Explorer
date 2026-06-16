@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import Engine from '../engine';
+import type { PVLine } from '../engine';
 
 export interface StockfishEvaluation {
   positionEvaluation: number;
@@ -7,6 +8,7 @@ export interface StockfishEvaluation {
   bestLine: string;
   bestMove: string;
   depth: number;
+  lines: PVLine[];
 }
 
 export function useStockfish(fen: string, turn: 'w' | 'b', isGameOver: boolean) {
@@ -17,6 +19,7 @@ export function useStockfish(fen: string, turn: 'w' | 'b', isGameOver: boolean) 
     bestLine: '',
     bestMove: '',
     depth: 0,
+    lines: [],
   });
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const prevFenRef = useRef<string>('');
@@ -53,6 +56,10 @@ export function useStockfish(fen: string, turn: 'w' | 'b', isGameOver: boolean) 
 
       if (depth) {
         setEvaluation((prev) => ({ ...prev, depth }));
+      }
+
+      if (lines) {
+        setEvaluation((prev) => ({ ...prev, lines }));
       }
 
       if (pv) {
@@ -97,6 +104,7 @@ export function useStockfish(fen: string, turn: 'w' | 'b', isGameOver: boolean) 
       bestLine: '',
       bestMove: '',
       depth: 0,
+      lines: [],
     });
     setIsAnalyzing(true);
 
@@ -120,6 +128,7 @@ export function useStockfish(fen: string, turn: 'w' | 'b', isGameOver: boolean) 
       bestLine: '',
       bestMove: '',
       depth: 0,
+      lines: [],
     });
   }, []);
 

@@ -1,3 +1,4 @@
+
 import { memo } from 'react';
 import type { PositionStats as PositionStatsType } from '../../hooks/usePositionData';
 import { AlertCircle, Trophy, Target } from 'lucide-react';
@@ -10,34 +11,33 @@ interface PositionStatsProps {
 
 const getPercentage = (value: number, total: number) => {
   return total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
-};
+}
 
 export const PositionStats = memo(({ stats, loading, error }: PositionStatsProps) => {
-  // Check if it's a 404 error
   const is404 = error?.includes('404') || error?.includes('not found');
-  
+
   return (
-    <div className="bg-slate-800 rounded-xl shadow-2xl p-6">
-      <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-        <Trophy size={20} className="text-yellow-500" />
+    <div className="rounded-lg border border-[#33312e] bg-[#262421] p-4 w-64">
+      <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-[#e0e0e0]">
+        <Trophy size={18} className="text-yellow-500" />
         Position Statistics
       </h2>
 
       {loading && (
-        <div className="text-center py-8">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="mt-4 text-slate-400 text-sm">Loading stats...</p>
+        <div className="py-6 text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-[#404040] border-b-emerald-500"></div>
+          <p className="mt-2 text-xs text-[#808080]">Loading stats…</p>
         </div>
       )}
 
       {is404 && (
-        <div className="bg-amber-900/30 border border-amber-500/50 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="text-amber-400 mt-0.5" size={20} />
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 text-amber-400" size={18} />
             <div>
-              <h3 className="font-semibold text-amber-300 mb-1">Position Not Found</h3>
-              <p className="text-sm text-slate-300">
-                You haven't reached this position in your games yet. 
+              <h3 className="text-sm font-semibold text-amber-300">Position Not Found</h3>
+              <p className="text-xs text-[#b0b0b0]">
+                You haven&apos;t reached this position in your games yet.
                 Try playing more games or exploring different moves!
               </p>
             </div>
@@ -46,10 +46,10 @@ export const PositionStats = memo(({ stats, loading, error }: PositionStatsProps
       )}
 
       {error && !is404 && (
-        <div className="bg-red-900/50 border border-red-500 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="text-red-400 mt-0.5" size={20} />
-            <div className="text-sm">
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 text-red-400" size={18} />
+            <div className="text-xs text-[#d0d0d0]">
               <strong>Error:</strong> {error}
             </div>
           </div>
@@ -57,61 +57,60 @@ export const PositionStats = memo(({ stats, loading, error }: PositionStatsProps
       )}
 
       {stats && !loading && (
-        <>
-          <div className="space-y-3 mb-6">
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400 flex items-center gap-2">
-                <Target size={16} />
-                Total Games:
-              </span>
-              <span className="text-2xl font-bold">{stats.totalGames}</span>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-sm text-[#a0a0a0]">
+              <Target size={14} />
+              Total Games:
+            </span>
+            <span className="text-xl font-bold text-white">{stats.totalGames}</span>
+          </div>
+
+          <div className="space-y-2">
+            <div>
+              <div className="mb-1 flex justify-between text-xs">
+                <span className="text-emerald-400">Wins</span>
+                <span className="text-[#d0d0d0]">{stats.wins} ({getPercentage(stats.wins, stats.totalGames)}%)</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-[#1e1c19]">
+                <div
+                  className="h-full bg-emerald-500 transition-all"
+                  style={{ width: `${getPercentage(stats.wins, stats.totalGames)}%` }}
+                ></div>
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-green-400">Wins</span>
-                  <span>{stats.wins} ({getPercentage(stats.wins, stats.totalGames)}%)</span>
-                </div>
-                <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-green-500 transition-all"
-                    style={{ width: `${getPercentage(stats.wins, stats.totalGames)}%` }}
-                  ></div>
-                </div>
+            <div>
+              <div className="mb-1 flex justify-between text-xs">
+                <span className="text-zinc-400">Draws</span>
+                <span className="text-[#d0d0d0]">{stats.draws} ({getPercentage(stats.draws, stats.totalGames)}%)</span>
               </div>
-
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-slate-400">Draws</span>
-                  <span>{stats.draws} ({getPercentage(stats.draws, stats.totalGames)}%)</span>
-                </div>
-                <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-slate-400 transition-all"
-                    style={{ width: `${getPercentage(stats.draws, stats.totalGames)}%` }}
-                  ></div>
-                </div>
+              <div className="h-2 overflow-hidden rounded-full bg-[#1e1c19]">
+                <div
+                  className="h-full bg-zinc-400 transition-all"
+                  style={{ width: `${getPercentage(stats.draws, stats.totalGames)}%` }}
+                ></div>
               </div>
+            </div>
 
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-red-400">Losses</span>
-                  <span>{stats.losses} ({getPercentage(stats.losses, stats.totalGames)}%)</span>
-                </div>
-                <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-red-500 transition-all"
-                    style={{ width: `${getPercentage(stats.losses, stats.totalGames)}%` }}
-                  ></div>
-                </div>
+            <div>
+              <div className="mb-1 flex justify-between text-xs">
+                <span className="text-red-400">Losses</span>
+                <span className="text-[#d0d0d0]">{stats.losses} ({getPercentage(stats.losses, stats.totalGames)}%)</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-[#1e1c19]">
+                <div
+                  className="h-full bg-red-500 transition-all"
+                  style={{ width: `${getPercentage(stats.losses, stats.totalGames)}%` }}
+                ></div>
               </div>
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
 });
 
 PositionStats.displayName = 'PositionStats';
+

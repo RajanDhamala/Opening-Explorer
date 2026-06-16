@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { Clock3 } from 'lucide-react';
 import { useChessStore } from '../../stores/useChessStore';
 
-type TimeClass = "all" | "bullet" | "blitz" | "rapid" | "classical";
+type TimeClass = 'all' | 'bullet' | 'blitz' | 'rapid' | 'classical';
 
 interface TimeControlFilterProps {
   timeClassStats?: {
@@ -27,29 +27,32 @@ export const TimeControlFilter = memo(({ timeClassStats }: TimeControlFilterProp
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
+      <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#808080]">
         <Clock3 size={13} />
         Time
       </span>
-      <div className="flex flex-wrap gap-1 rounded-lg border border-zinc-800 bg-zinc-950 p-1">
-        {options.map(option => {
-          const count = option.value === 'all' 
-            ? (timeClassStats ? Object.values(timeClassStats).reduce((a, b) => a + b, 0) : 0)
-            : (timeClassStats?.[option.value as keyof typeof timeClassStats] || 0);
-          
+      <div className="flex flex-wrap gap-1 rounded-md border border-[#404040] bg-[#1e1c19] p-0.5">
+        {options.map((option) => {
+          const count =
+            option.value === 'all'
+              ? timeClassStats
+                ? Object.values(timeClassStats).reduce((a, b) => a + b, 0)
+                : 0
+              : timeClassStats?.[option.value as keyof typeof timeClassStats] || 0;
+
           return (
             <button
               key={option.value}
               onClick={() => setTimeClassFilter(option.value)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+              className={`rounded px-2.5 py-1 text-sm font-medium transition ${
                 timeClassFilter === option.value
-                  ? 'bg-emerald-500 text-zinc-950'
-                  : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100'
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-[#b0b0b0] hover:bg-[#2a2824] hover:text-white'
               }`}
             >
               {option.label}
               {timeClassStats && count > 0 && (
-                <span className="ml-2 text-xs opacity-70">{count}</span>
+                <span className="ml-1.5 text-[10px] opacity-70">{count}</span>
               )}
             </button>
           );

@@ -12,52 +12,51 @@ export const BoardControls = memo(() => {
   const moveHistory = useChessStore((state) => state.moveHistory);
 
   const canGoPrev = currentNode !== null;
-
-  const canGoNext = (!currentNode && moveTree !== null) ||
+  const canGoNext =
+    (!currentNode && moveTree !== null) ||
     (currentNode !== null && currentNode.children.length > 0);
 
   return (
-    <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+    <div className="flex flex-wrap items-center gap-2">
       <button
         onClick={resetBoard}
-        className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:border-emerald-500/60 hover:text-emerald-300"
+        className="flex items-center gap-1.5 rounded-md border border-[#404040] bg-[#1e1c19] px-2.5 py-1.5 text-sm font-medium text-[#d0d0d0] transition hover:border-emerald-600/60 hover:text-emerald-400"
         title="Reset to starting position"
       >
-        <RotateCcw size={18} />
+        <RotateCcw size={16} />
         Reset
       </button>
 
-      <button
-        onClick={prevMove}
-        disabled={!canGoPrev}
-        className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-30"
-        title="Previous move"
-      >
-        <ChevronLeft size={18} />
-        Previous
-      </button>
+      <div className="flex items-center rounded-md border border-[#404040] bg-[#1e1c19] p-0.5">
+        <button
+          onClick={prevMove}
+          disabled={!canGoPrev}
+          className="rounded p-1.5 text-[#d0d0d0] transition hover:bg-[#2a2824] disabled:cursor-not-allowed disabled:opacity-30"
+          title="Previous move"
+        >
+          <ChevronLeft size={18} />
+        </button>
+        <button
+          onClick={nextMove}
+          disabled={!canGoNext}
+          className="rounded p-1.5 text-[#d0d0d0] transition hover:bg-[#2a2824] disabled:cursor-not-allowed disabled:opacity-30"
+          title="Next move"
+        >
+          <ChevronRight size={18} />
+        </button>
+      </div>
 
-      <button
-        onClick={nextMove}
-        disabled={!canGoNext}
-        className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-30"
-        title="Next move"
-      >
-        Next
-        <ChevronRight size={18} />
-      </button>
-
-      <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-400">
-        Move: {moveHistory.length > 0 ? moveHistory.length : 0}
+      <div className="flex items-center rounded-md border border-[#404040] bg-[#1e1c19] px-2.5 py-1.5 text-sm text-[#808080]">
+        Move: <span className="ml-1 text-[#d0d0d0]">{moveHistory.length}</span>
       </div>
 
       <button
         onClick={flipBoard}
-        className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-600"
+        className="flex items-center gap-1.5 rounded-md border border-[#404040] bg-[#1e1c19] px-2.5 py-1.5 text-sm text-[#d0d0d0] transition hover:bg-[#2a2824]"
         title="Flip board orientation"
       >
-        <Repeat2 size={18} />
-        Flip Board
+        <Repeat2 size={16} />
+        Flip
       </button>
     </div>
   );

@@ -35,8 +35,8 @@ function getMoveArrow(currentFen: string, nextMove: NextMoveType, maxGames: numb
       from: move.from,
       to: move.to,
       color: index === 0 ? 'rgb(16,185,129)' : 'rgb(245,158,11)',
-      opacity: Math.min(0.9, 0.18 + popularity * 0.72),
-      widthScale: Math.min(1.4, 0.68 + popularity * 0.62),
+      opacity: index === 0 ? 0.7 : 0.5,
+      widthScale: index === 0 ? 0.2 : 0.12 + popularity * 0.28,
     };
   } catch {
     return null;
@@ -99,129 +99,57 @@ export default function ChessTree() {
     }
   }, [addMove]);
 
-  const winRate = totalGames > 0 && data?.stats
-    ? ((data.stats.wins / totalGames) * 100).toFixed(1)
-    : '0.0';
 
   return (
-    <main className="min-h-screen bg-[#11130f] text-zinc-100">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col gap-3 px-3 py-3 sm:px-4 lg:px-5">
-
-        {/* ── Header ── */}
-        <header className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-[#171915] px-3 py-3 shadow-[0_12px_40px_rgba(0,0,0,0.24)] lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-emerald-400/30 bg-emerald-400/10">
-              <GitBranch size={18} className="text-emerald-300" />
-            </span>
-            <div className="min-w-0">
-              <h1 className="text-xl font-semibold tracking-tight text-zinc-50">Chess Tree</h1>
-              <p className="truncate text-sm text-zinc-500">
-                {moveHistory.length > 0 ? moveHistory.join(' ') : 'Starting position'}
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
-            <div className="rounded-md border border-zinc-800 bg-zinc-950/80 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Games</div>
-              <div className="text-base font-semibold text-zinc-100">{totalGames}</div>
-            </div>
-            <div className="rounded-md border border-zinc-800 bg-zinc-950/80 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Win rate</div>
-              <div className="text-base font-semibold text-emerald-300">{winRate}%</div>
-            </div>
-            <div className="rounded-md border border-zinc-800 bg-zinc-950/80 px-3 py-2">
-              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                <Activity size={12} />
-                Engine
-              </div>
-              <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
-                {isAnalyzing && <Loader2 size={14} className="animate-spin text-sky-300" />}
-                depth {evaluation.depth || 0}
-              </div>
-            </div>
-            <div className="rounded-md border border-zinc-800 bg-zinc-950/80 px-3 py-2">
-              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                <Database size={12} />
-                Branches
-              </div>
-              <div className="text-sm font-medium text-amber-300">{nextMoves.length}</div>
-            </div>
-          </div>
-        </header>
-
-        {/* ── Main 3-column grid ──
-            board col: takes remaining space (min 0, no fixed max so it breathes)
-            moves col: fixed 340px — enough for the player-database table
-            stats col: fixed 240px — position stats + recent games
+    <main className="min-h-screen bg-[#161512] text-[#bababa]">
+      <div className="mx-auto flex min-h-screen w-full max-w-[1800px] flex-col gap-4 px-3 py-3">
+        {/* ── Main grid ──
+            board col: fills remaining width so the board can grow
+            right col: fixed 400–440px for engine + database + stats
         */}
-        <section className="grid min-h-0 flex-1 gap-4
-          lg:grid-cols-[minmax(0,1fr)_340px]
-          xl:grid-cols-[minmax(0,1fr)_340px_240px]
-          xl:items-start">
+        <section className="grid flex-1 gap-4 lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_380px]">
 
           {/* ── Board column ── */}
-          <div className="min-w-0">
+          <div className="flex min-w-0 flex-col gap-3">
             {/* Controls bar */}
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-[#171915] px-3 py-2">
-              <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#33312e] bg-[#262421] px-3 py-2">
+              <div className="flex flex-wrap items-center gap-3">
                 <ColorSelector />
                 <TimeControlFilter timeClassStats={data?.timeClassStats} />
               </div>
               <BoardControls />
             </div>
 
-            {/* Eval bar + board side by side */}
-            <div className="grid gap-3 lg:grid-cols-[72px_minmax(0,1fr)]">
-              <div className="hidden lg:block">
-                <EvaluationBar
-                  evaluation={evaluation.positionEvaluation}
-                  possibleMate={evaluation.possibleMate}
-                  depth={evaluation.depth}
-                  bestLine={evaluation.bestLine}
-                  isAnalyzing={isAnalyzing}
-                />
-              </div>
-
+            {/* Eval bar + board */}
+            <div className="grid flex-1 gap-3 mt-28">
               <div className="min-w-0">
                 <ChessBoardComponent
                   onMove={(move) => makeMove(move)}
                   arrows={boardArrows}
                 />
-                <div className="mt-3">
-                  <MoveHistory />
-                </div>
               </div>
             </div>
+
+
+            <div className='absolute top-30 flex flex-col space-y-5 '>
+              <PositionStats
+                stats={data?.stats || null}
+                loading={isLoading}
+                error={error?.message || null}
+              />
+
+              <RecentGames games={data?.recentGames || []} />
+            </div>
+
           </div>
 
-          {/* ── Player database / Next moves column ── */}
-          <aside className="min-w-0 space-y-3">
+          <aside className="absolute top-40 right-20">
             <NextMoves
               moves={nextMoves}
               loading={isLoading}
               onMoveClick={makeMove}
             />
-            {/* Eval bar on mobile/tablet (below board) */}
-            <div className="lg:hidden">
-              <EvaluationBar
-                evaluation={evaluation.positionEvaluation}
-                possibleMate={evaluation.possibleMate}
-                depth={evaluation.depth}
-                bestLine={evaluation.bestLine}
-                isAnalyzing={isAnalyzing}
-              />
-            </div>
-          </aside>
 
-          {/* ── Stats + Recent games column ── */}
-          <aside className="min-w-0 space-y-3 lg:col-span-2 xl:col-span-1">
-            <PositionStats
-              stats={data?.stats || null}
-              loading={isLoading}
-              error={error?.message || null}
-            />
-            <RecentGames games={data?.recentGames || []} />
           </aside>
         </section>
       </div>

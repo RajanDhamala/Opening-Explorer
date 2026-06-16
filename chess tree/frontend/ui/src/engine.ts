@@ -4,7 +4,7 @@
  * Supports all 5 engine variants with user selection.
  */
 
-type PVLine = {
+export type PVLine = {
   multipv: number;
   depth: number;
   scoreCp?: number;

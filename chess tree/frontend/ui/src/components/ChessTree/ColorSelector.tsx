@@ -7,24 +7,24 @@ export const ColorSelector = memo(() => {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">Color</span>
-      <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-950 p-1">
+      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#808080]">Color</span>
+      <div className="flex gap-1 rounded-md border border-[#404040] bg-[#1e1c19] p-0.5">
         <button
-          onClick={() => setPlayerColor("white")}
-          className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-            playerColor === "white"
-              ? 'bg-zinc-100 text-zinc-950'
-              : 'text-zinc-400 hover:text-zinc-100'
+          onClick={() => setPlayerColor('white')}
+          className={`rounded px-3 py-1 text-sm font-medium transition ${
+            playerColor === 'white'
+              ? 'bg-zinc-200 text-black'
+              : 'text-[#b0b0b0] hover:text-white'
           }`}
         >
           White
         </button>
         <button
-          onClick={() => setPlayerColor("black")}
-          className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-            playerColor === "black"
-              ? 'bg-zinc-800 text-zinc-50 ring-1 ring-zinc-600'
-              : 'text-zinc-400 hover:text-zinc-100'
+          onClick={() => setPlayerColor('black')}
+          className={`rounded px-3 py-1 text-sm font-medium transition ${
+            playerColor === 'black'
+              ? 'bg-[#404040] text-white'
+              : 'text-[#b0b0b0] hover:text-white'
           }`}
         >
           Black
