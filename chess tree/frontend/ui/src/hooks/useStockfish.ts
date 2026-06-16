@@ -29,7 +29,13 @@ export function useStockfish(fen: string, turn: 'w' | 'b', isGameOver: boolean) 
   useEffect(() => {
     console.log('[useStockfish] Setting up message handler');
 
-    engine.onMessage(({ positionEvaluation, possibleMate, pv, depth, bestMove }) => {
+    engine.onMessage(({ lines, bestMove }) => {
+      const primaryLine = lines?.[0];
+      const positionEvaluation = primaryLine?.scoreCp;
+      const possibleMate = primaryLine?.mate?.toString() || '';
+      const pv = primaryLine?.pv || '';
+      const depth = primaryLine?.depth || 0;
+
       console.log('[useStockfish] Received:', { positionEvaluation, possibleMate, depth, bestMove, pv: pv?.substring(0, 30) });
 
       if (depth && depth < 10) return;

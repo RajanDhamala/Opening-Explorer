@@ -17,10 +17,10 @@ export const BoardControls = memo(() => {
     (currentNode !== null && currentNode.children.length > 0);
 
   return (
-    <div className="mt-4 flex gap-2 justify-center flex-wrap">
+    <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
       <button
         onClick={resetBoard}
-        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition font-semibold flex items-center gap-2"
+        className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:border-emerald-500/60 hover:text-emerald-300"
         title="Reset to starting position"
       >
         <RotateCcw size={18} />
@@ -30,7 +30,7 @@ export const BoardControls = memo(() => {
       <button
         onClick={prevMove}
         disabled={!canGoPrev}
-        className="px-4 py-2 bg-slate-600 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg transition flex items-center gap-2"
+        className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-30"
         title="Previous move"
       >
         <ChevronLeft size={18} />
@@ -40,20 +40,20 @@ export const BoardControls = memo(() => {
       <button
         onClick={nextMove}
         disabled={!canGoNext}
-        className="px-4 py-2 bg-slate-600 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg transition flex items-center gap-2"
+        className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-30"
         title="Next move"
       >
         Next
         <ChevronRight size={18} />
       </button>
 
-      <div className="px-3 py-2 bg-slate-700 rounded-lg text-sm flex items-center">
+      <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-400">
         Move: {moveHistory.length > 0 ? moveHistory.length : 0}
       </div>
 
       <button
         onClick={flipBoard}
-        className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition flex items-center gap-2"
+        className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-600"
         title="Flip board orientation"
       >
         <Repeat2 size={18} />

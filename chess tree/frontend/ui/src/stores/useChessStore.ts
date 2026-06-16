@@ -48,7 +48,7 @@ interface ChessState {
 
   setGame: (game: Chess) => void;
   setFen: (fen: string) => void;
-  addMove: (move: string) => void;
+  addMove: (move: string, fen?: string) => void;
   setMoveHistory: (history: string[]) => void;
   setCurrentMoveIndex: (index: number) => void;
   setMoveFrom: (square: Square | null) => void;
@@ -82,9 +82,15 @@ export const useChessStore = create<ChessState>((set, get) => ({
   setGame: (game) => set({ game }),
   setFen: (fen) => set({ fen }),
 
-  addMove: (move) => set((state) => {
+  addMove: (move, targetFen) => set((state) => {
     const newGame = new Chess(state.game.fen());
-    newGame.move(move);
+    if (targetFen) {
+      const validationGame = new Chess(state.game.fen());
+      validationGame.move(move);
+      newGame.load(targetFen);
+    } else {
+      newGame.move(move);
+    }
     const newFen = newGame.fen();
 
     let newNode: MoveNode;
@@ -102,7 +108,7 @@ export const useChessStore = create<ChessState>((set, get) => ({
       newCurrentNode = newNode;
     }
     else if (!state.currentNode) {
-      if (state.moveTree.move === move) {
+      if (state.moveTree.move === move && state.moveTree.fen === newFen) {
         newCurrentNode = state.moveTree;
       } else {
         newNode = {
@@ -116,7 +122,7 @@ export const useChessStore = create<ChessState>((set, get) => ({
       }
     }
     else {
-      const existingChild = state.currentNode.children.find(child => child.move === move);
+      const existingChild = state.currentNode.children.find(child => child.move === move && child.fen === newFen);
 
       if (existingChild) {
         newCurrentNode = existingChild;
@@ -180,7 +186,7 @@ export const useChessStore = create<ChessState>((set, get) => ({
   },
 
   goToMove: (index) => {
-    const { currentNode, moveTree } = get();
+    const { currentNode } = get();
 
     const fullPath: MoveNode[] = [];
 

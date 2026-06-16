@@ -1,10 +1,9 @@
-import { memo, useCallback, useState, useEffect, useRef } from 'react';
+import { memo, useCallback, useState, useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react';
 import { useChessStore, type MoveNode } from '../../stores/useChessStore';
 import { GitBranch, ChevronRight } from 'lucide-react';
 
 const MoveHistory = memo(() => {
   const currentNode = useChessStore((state) => state.currentNode);
-  const moveTree = useChessStore((state) => state.moveTree);
   const currentMoveIndex = useChessStore((state) => state.currentMoveIndex);
   const goToMove = useChessStore((state) => state.goToMove);
   const selectVariation = useChessStore((state) => state.selectVariation);
@@ -45,14 +44,13 @@ const MoveHistory = memo(() => {
     return path;
   }, [currentNode]);
 
-  const handleMoveClick = useCallback((moveIndex: number, move: any) => {
-    console.log("move selected:", move)
+  const handleMoveClick = useCallback((moveIndex: number) => {
     goToMove(moveIndex);
     setVariationMenu(null);
   }, [goToMove]);
 
   const handleVariationIconClick = useCallback((
-    e: React.MouseEvent,
+    e: ReactMouseEvent,
     parentNode: MoveNode,
     currentMove: string,
     moveIndex: number
@@ -86,7 +84,6 @@ const MoveHistory = memo(() => {
 
   // Close menu on position change
   useEffect(() => {
-    console.log("currentMoveIndex", currentMoveIndex)
     setVariationMenu(null);
   }, [currentMoveIndex]);
 
@@ -104,11 +101,11 @@ const MoveHistory = memo(() => {
   const fullPath = getFullPath();
 
   // Show message if no moves yet
-  if (fullPath.length === 0 && !moveTree) {
+  if (fullPath.length === 0) {
     return (
-      <div className="mt-4 p-4 bg-slate-700 rounded-lg">
-        <h3 className="font-semibold mb-2">Move History</h3>
-        <p className="text-slate-400 text-sm">Make a move to start</p>
+      <div className="rounded-lg border border-zinc-800 bg-[#1b1d18] px-3 py-2">
+        <h3 className="text-sm font-semibold text-zinc-100">Move History</h3>
+        <p className="mt-1 text-sm text-zinc-500">Make a move to start</p>
       </div>
     );
   }
@@ -150,12 +147,12 @@ const MoveHistory = memo(() => {
     return (
       <div className="flex items-center gap-1">
         <button
-          onClick={() => handleMoveClick(data.index, data.move)}
-          className={`px-2 py-1 rounded transition-colors font-mono ${isCurrentMove
-            ? 'bg-blue-600 hover:bg-blue-700 ring-2 ring-blue-400'
+          onClick={() => handleMoveClick(data.index)}
+          className={`rounded px-2 py-1 font-mono text-sm transition-colors ${isCurrentMove
+            ? 'bg-emerald-600 text-white ring-1 ring-emerald-300'
             : data.isFuture
-              ? 'bg-slate-500/50 hover:bg-slate-500 text-slate-300'
-              : 'bg-slate-600 hover:bg-slate-500'
+              ? 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300'
+              : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
             }`}
         >
           {data.move}
@@ -164,7 +161,7 @@ const MoveHistory = memo(() => {
         {hasSiblings && (
           <button
             onClick={(e) => handleVariationIconClick(e, data.node.parent!, data.move, data.index)}
-            className="text-amber-400 hover:text-amber-300 transition-colors p-1 rounded hover:bg-slate-600"
+            className="rounded p-1 text-amber-400 transition-colors hover:bg-zinc-800 hover:text-amber-300"
             title={`${data.node.parent!.children.length} variations available`}
           >
             <GitBranch size={14} />
@@ -175,20 +172,20 @@ const MoveHistory = memo(() => {
   };
 
   return (
-    <div className="mt-4 p-4 bg-slate-700 rounded-lg relative" ref={containerRef}>
+    <div className="relative rounded-lg border border-zinc-800 bg-[#1b1d18] px-3 py-2" ref={containerRef}>
       {/* Variation selection at top when there are options */}
       {currentNode && currentNode.children.length > 1 && (
-        <div className="mb-3 pb-3 border-b border-slate-600">
-          <div className="text-xs text-amber-400 mb-2 flex items-center gap-1">
+        <div className="mb-2 border-b border-zinc-800 pb-2">
+          <div className="mb-2 flex items-center gap-1 text-xs text-amber-400">
             <ChevronRight size={12} />
             Choose next move:
           </div>
-          <div className="flex flex-wrap gap-2 ">
+          <div className="flex flex-wrap gap-2">
             {currentNode.children.map((child, idx) => (
               <button
                 key={idx}
                 onClick={() => selectVariation(idx)}
-                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 rounded text-sm font-mono transition-colors font-semibold"
+                className="rounded bg-amber-500/20 px-3 py-1.5 font-mono text-sm font-semibold text-amber-200 transition-colors hover:bg-amber-500/30"
               >
                 {child.move}
               </button>
@@ -197,12 +194,12 @@ const MoveHistory = memo(() => {
         </div>
       )}
 
-      <h3 className="font-semibold mb-3">Move History</h3>
+      <h3 className="mb-2 text-sm font-semibold text-zinc-100">Move History</h3>
 
-      <div className="space-y-1 max-h-48 overflow-y-auto">
+      <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
         {rows.map((row, idx) => (
-          <div key={idx} className="flex items-center gap-2 text-sm flex-wrap">
-            <span className="text-slate-400 w-8 text-right shrink-0">{row.moveNumber}.</span>
+          <div key={idx} className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="w-8 shrink-0 text-right text-zinc-500">{row.moveNumber}.</span>
 
             {row.white && renderMoveCell(row.white)}
             {row.black && renderMoveCell(row.black)}
@@ -213,27 +210,27 @@ const MoveHistory = memo(() => {
       {/* Floating variation menu */}
       {variationMenu && (
         <div
-          className="absolute z-50 bg-slate-800 border-2 border-amber-500 rounded-lg shadow-xl p-2 min-w-[150px]"
+          className="absolute z-50 min-w-[150px] rounded-lg border border-amber-500 bg-zinc-950 p-2 shadow-xl"
           style={{
             top: `${Math.min(variationMenu.position.top, 150)}px`,
             left: `${variationMenu.position.left}px`
           }}
         >
-          <div className="text-xs text-amber-300 mb-2 font-semibold border-b border-slate-600 pb-1">
+          <div className="mb-2 border-b border-zinc-800 pb-1 text-xs font-semibold text-amber-300">
             Select variation:
           </div>
           {variationMenu.parentNode.children.map((child, idx) => (
             <button
               key={idx}
               onClick={() => handleVariationSelect(idx)}
-              className={`block w-full text-left px-3 py-1.5 rounded transition-colors font-mono text-sm mb-1 ${child.move === variationMenu.currentMoveInPath
-                ? 'bg-blue-600 text-white'
-                : 'hover:bg-slate-600 text-slate-200'
+              className={`mb-1 block w-full rounded px-3 py-1.5 text-left font-mono text-sm transition-colors ${child.move === variationMenu.currentMoveInPath
+                ? 'bg-emerald-600 text-white'
+                : 'text-zinc-200 hover:bg-zinc-800'
                 }`}
             >
               {child.move}
               {child.move === variationMenu.currentMoveInPath && (
-                <span className="text-xs ml-2 text-blue-200">(current)</span>
+                <span className="ml-2 text-xs text-emerald-100">(current)</span>
               )}
             </button>
           ))}

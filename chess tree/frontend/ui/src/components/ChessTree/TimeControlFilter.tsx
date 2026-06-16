@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { Clock3 } from 'lucide-react';
 import { useChessStore } from '../../stores/useChessStore';
 
 type TimeClass = "all" | "bullet" | "blitz" | "rapid" | "classical";
@@ -16,18 +17,21 @@ export const TimeControlFilter = memo(({ timeClassStats }: TimeControlFilterProp
   const timeClassFilter = useChessStore((state) => state.timeClassFilter);
   const setTimeClassFilter = useChessStore((state) => state.setTimeClassFilter);
 
-  const options: { value: TimeClass; label: string; icon: string }[] = [
-    { value: 'all', label: 'All', icon: '⚡' },
-    { value: 'bullet', label: 'Bullet', icon: '🔫' },
-    { value: 'blitz', label: 'Blitz', icon: '⚡' },
-    { value: 'rapid', label: 'Rapid', icon: '🏃' },
-    { value: 'classical', label: 'Classical', icon: '♟️' },
+  const options: { value: TimeClass; label: string }[] = [
+    { value: 'all', label: 'All' },
+    { value: 'bullet', label: 'Bullet' },
+    { value: 'blitz', label: 'Blitz' },
+    { value: 'rapid', label: 'Rapid' },
+    { value: 'classical', label: 'Classical' },
   ];
 
   return (
-    <div className="space-y-2">
-      <span className="text-sm text-slate-400">Time Control:</span>
-      <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
+        <Clock3 size={13} />
+        Time
+      </span>
+      <div className="flex flex-wrap gap-1 rounded-lg border border-zinc-800 bg-zinc-950 p-1">
         {options.map(option => {
           const count = option.value === 'all' 
             ? (timeClassStats ? Object.values(timeClassStats).reduce((a, b) => a + b, 0) : 0)
@@ -37,16 +41,15 @@ export const TimeControlFilter = memo(({ timeClassStats }: TimeControlFilterProp
             <button
               key={option.value}
               onClick={() => setTimeClassFilter(option.value)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
                 timeClassFilter === option.value
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                  ? 'bg-emerald-500 text-zinc-950'
+                  : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100'
               }`}
             >
-              <span className="mr-1">{option.icon}</span>
               {option.label}
               {timeClassStats && count > 0 && (
-                <span className="ml-2 text-xs opacity-75">({count})</span>
+                <span className="ml-2 text-xs opacity-70">{count}</span>
               )}
             </button>
           );

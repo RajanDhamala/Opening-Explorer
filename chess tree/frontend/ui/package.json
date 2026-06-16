@@ -12,7 +12,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@tanstack/react-query": "^5.90.2",
     "axios": "^1.12.2",
-    "chess.js": "^1.0.0-beta.8",
+    "chess.js": "^1.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.544.0",
@@ -22,6 +22,7 @@
     "react-hot-toast": "^2.6.0",
     "react-router-dom": "^7.9.3",
     "stockfish": "^17.1.0",
+    "swiftchess": "^0.1.5",
     "tailwind-merge": "^3.3.1",
     "tailwindcss": "^4.1.14",
     "zustand": "^5.0.8"
