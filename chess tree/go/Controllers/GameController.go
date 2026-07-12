@@ -3,8 +3,10 @@ package Controllers
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"chess/Database"
@@ -20,6 +22,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const fallbackProcessingUsername = "Ashish1234555"
+
+var activeProcessingUsers sync.Map
+
+func processingUsername() string {
+	if configured := strings.TrimSpace(os.Getenv("PIPELINE_USERNAME")); configured != "" {
+		return configured
+	}
+	return fallbackProcessingUsername
+}
+
+func beginUserProcessing(username string) bool {
+	_, alreadyRunning := activeProcessingUsers.LoadOrStore(strings.ToLower(strings.TrimSpace(username)), struct{}{})
+	return !alreadyRunning
+}
+
+func endUserProcessing(username string) {
+	activeProcessingUsers.Delete(strings.ToLower(strings.TrimSpace(username)))
+}
+
 func filterIssuesWithSolution(issues []db.Issue) []db.Issue {
 	filtered := make([]db.Issue, 0, len(issues))
 	for _, issue := range issues {
@@ -29,6 +51,11 @@ func filterIssuesWithSolution(issues []db.Issue) []db.Issue {
 		filtered = append(filtered, issue)
 	}
 	return filtered
+}
+
+func issueUUIDForRow(userID int32, gameID string, issue types.MoveIssue) uuid.UUID {
+	key := types.MoveIssueIdentityKey(userID, gameID, issue)
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(key))
 }
 
 func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
@@ -61,25 +88,54 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 		}
 	}
 
-	usrGames, err := utils.FetchProcess("tinku")
+	configuredUsername := processingUsername()
+	usrGames, username, err := utils.FetchProcessForAnalysis(configuredUsername)
 	if err != nil {
 		fmt.Println("failed to fetch games:", err)
 		return c.Status(400).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
-	username := "Ashish1234555"
+	if !strings.EqualFold(configuredUsername, username) {
+		fmt.Printf(
+			"[process] configured username %q differs from archive account %q; using archive account\n",
+			configuredUsername,
+			username,
+		)
+	}
+	if !beginUserProcessing(username) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error": "game processing is already running for this username",
+		})
+	}
+	defer endUserProcessing(username)
 	evalGames := utils.EvaluateAllGames(usrGames, username)
-	resultStream := Processpipline.PlayGamesStream(evalGames, utils.Client)
+	if len(evalGames) == 0 {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"error":             "selected archive contained no evaluatable standard games for its account",
+			"username":          username,
+			"fetched_games":     len(usrGames.Games),
+			"evaluatable_games": 0,
+		})
+	}
+	fmt.Printf(
+		"[process] username=%s fetched_games=%d evaluatable_games=%d\n",
+		username,
+		len(usrGames.Games),
+		len(evalGames),
+	)
+	resultStream := Processpipline.PlayGamesStreamWithContext(c.Context(), evalGames, utils.Client)
 	gameResults := make([]types.EvalGameResult, 0, len(evalGames))
 
 	failedCount := 0
 	successCount := 0
+	processingFailedCount := 0
 
 	totalIssues := 0
 	gamesWithIssues := 0
 	issueInsertCount := int64(0)
 	issueFailedCount := 0
+	issueSkippedDuplicateCount := int64(0)
 
 	ids := make([]pgtype.UUID, 0, len(evalGames))
 	gameurls := make([]string, 0, len(evalGames))
@@ -93,6 +149,7 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 	issuecounts := make([]int32, 0, len(evalGames))
 	userids := make([]int32, 0, len(evalGames))
 	issueRows := make([]types.IssueRow, 0, len(evalGames))
+	seenIssueIDs := make(map[uuid.UUID]struct{})
 
 	flushBatches := func() {
 		if len(ids) > 0 {
@@ -118,12 +175,16 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 		}
 
 		if len(issueRows) > 0 {
+			attemptedRows := int64(len(issueRows))
 			inserted, err := Database.BulkInsertIssues(c.Context(), ctrl.pool, issueRows)
 			if err != nil {
 				fmt.Println("failed to bulk insert issues:", err)
 				issueFailedCount += len(issueRows)
 			} else {
 				issueInsertCount += inserted
+				if inserted < attemptedRows {
+					issueSkippedDuplicateCount += attemptedRows - inserted
+				}
 			}
 		}
 
@@ -153,6 +214,16 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 			}
 
 			gameResults = append(gameResults, result)
+			if result.ProcessingError != "" || result.EvaluationErrors > 0 {
+				processingFailedCount++
+				fmt.Printf(
+					"skipping incomplete game %s: error=%q evaluation_errors=%d\n",
+					result.GameID,
+					result.ProcessingError,
+					result.EvaluationErrors,
+				)
+				continue
+			}
 			totalIssues += result.IssueCount
 			if result.IssueCount > 0 {
 				gamesWithIssues++
@@ -189,8 +260,16 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 				continue
 			}
 			for _, issue := range result.Issues {
-				issueUUID := uuid.New()
-				issueRows = append(issueRows, types.MoveIssueToRow(issue, issueUUID, gameUUID))
+				issueUUID := issueUUIDForRow(userID, result.GameID, issue)
+				if _, exists := seenIssueIDs[issueUUID]; exists {
+					issueSkippedDuplicateCount++
+					continue
+				}
+				seenIssueIDs[issueUUID] = struct{}{}
+
+				row := types.MoveIssueToRow(issue, issueUUID, gameUUID)
+				row.PuzzleKey = types.MoveIssuePuzzleKey(userID, issue)
+				issueRows = append(issueRows, row)
 			}
 		case <-flushTicker.C:
 			flushBatches()
@@ -198,17 +277,22 @@ func (ctrl *Controller) StartProcessing(c *fiber.Ctx) error {
 	}
 
 done:
-
 	return c.Status(200).JSON(fiber.Map{
-		"message":          "we evaluated all fetched games",
-		"data":             gameResults,
-		"total":            totalIssues,
-		"processed_games":  len(gameResults),
-		"games_with_issue": gamesWithIssues,
-		"dbfailed":         failedCount,
-		"dbsuccess":        successCount,
-		"issues_inserted":  issueInsertCount,
-		"issues_failed":    issueFailedCount,
+		"message":            "we evaluated all fetched games",
+		"username":           username,
+		"fetched_games":      len(usrGames.Games),
+		"evaluatable_games":  len(evalGames),
+		"data":               gameResults,
+		"total":              totalIssues,
+		"processed_games":    len(gameResults),
+		"processing_failed":  processingFailedCount,
+		"processing_success": len(gameResults) - processingFailedCount,
+		"games_with_issue":   gamesWithIssues,
+		"dbfailed":           failedCount,
+		"dbsuccess":          successCount,
+		"issues_inserted":    issueInsertCount,
+		"issues_failed":      issueFailedCount,
+		"issues_duplicate":   issueSkippedDuplicateCount,
 	})
 }
 
@@ -270,16 +354,19 @@ func (ctrl *Controller) StartFreemiumAnalysis(c *fiber.Ctx) error {
 		PuzzleCount    int                     `json:"puzzle_count"`
 		Issues         []types.MoveIssue       `json:"issues"`
 		Puzzles        []Processpipline.Puzzle `json:"puzzles"`
+		Error          string                  `json:"error,omitempty"`
 	}
 
 	gameResults := make([]freemiumGameResult, 0, len(evalGames))
 	totalIssues := 0
 	totalPuzzles := 0
 
-	for _, game := range evalGames {
-		issues, puzzles := Processpipline.GenerateFreemiumPuzzles(game.Moves, utils.Client, game.IsWhite)
-		totalIssues += len(issues)
-		totalPuzzles += len(puzzles)
+	config := Processpipline.FreemiumPipelineConfig(Processpipline.DefaultFreemiumAnalysisOptions())
+	pipelineResults := Processpipline.AnalyzeGames(c.Context(), evalGames, utils.Client, config)
+	for index, game := range evalGames {
+		result := pipelineResults[index]
+		totalIssues += len(result.Issues)
+		totalPuzzles += len(result.Puzzles)
 		gameResults = append(gameResults, freemiumGameResult{
 			GameID:         game.GameID,
 			GameURL:        game.GameURL,
@@ -288,10 +375,11 @@ func (ctrl *Controller) StartFreemiumAnalysis(c *fiber.Ctx) error {
 			OpponentRating: game.OpponentRating,
 			TimeClass:      game.TimeClass,
 			Result:         game.Result,
-			IssueCount:     len(issues),
-			PuzzleCount:    len(puzzles),
-			Issues:         issues,
-			Puzzles:        puzzles,
+			IssueCount:     len(result.Issues),
+			PuzzleCount:    len(result.Puzzles),
+			Issues:         result.Issues,
+			Puzzles:        result.Puzzles,
+			Error:          result.Error,
 		})
 	}
 
@@ -473,7 +561,7 @@ func (ctrl *Controller) EvalPostion(c *fiber.Ctx) error {
 	evalCtx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
 	defer cancel()
 
-	result, err := utils.Client.Evaluate(evalCtx, stockfish.EvalRequest{
+	result, err := Processpipline.EvaluateRawStockfish(evalCtx, utils.Client, stockfish.EvalRequest{
 		FEN: req.FEN,
 		// Depth: 17,
 		MoveTime: 1500 * time.Millisecond,

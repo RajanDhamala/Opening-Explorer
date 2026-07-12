@@ -43,4 +43,7 @@ func GameRouter(app *fiber.App, controller *Controllers.Controller) {
 			"black":   black,
 		})
 	})
+
+	GameRouter.Get("/single", controller.SingleGame)
+	// GameRouter.Get("/hash", controller.ProcessedGame)
 }
